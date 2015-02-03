@@ -163,7 +163,7 @@ class StockEntry(StockController):
 				frappe.throw(_("Production order number is mandatory for stock entry purpose manufacture"))
 			# check for double entry
 			self.check_duplicate_entry_for_production_order()
-		elif self.purpose != "Material Transfer":
+		elif self.purpose != "Material Transfer" and self.purpose != "Material Issue" and self.purpose != "Material Receipt":
 			self.production_order = None
 
 	def check_duplicate_entry_for_production_order(self):
