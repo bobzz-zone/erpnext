@@ -1,8 +1,8 @@
-// Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+// Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 // License: GNU General Public License v3. See license.txt
 
-var get_filters = function(){
- 	return[
+erpnext.get_sales_trends_filters = function() {
+	return[
 		{
 			"fieldname":"period",
 			"label": __("Period"),
@@ -45,14 +45,14 @@ var get_filters = function(){
 			"label": __("Fiscal Year"),
 			"fieldtype": "Link",
 			"options":'Fiscal Year',
-			"default": sys_defaults.fiscal_year
+			"default": frappe.sys_defaults.fiscal_year
 		},
 		{
 			"fieldname":"company",
 			"label": __("Company"),
 			"fieldtype": "Link",
 			"options": "Company",
-			"default": frappe.defaults.get_user_default("company")
+			"default": frappe.defaults.get_user_default("Company")
 		},
 	];
 }

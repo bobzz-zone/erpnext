@@ -1,23 +1,27 @@
-# Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+# Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt"
 
 
 from __future__ import unicode_literals
 import frappe
+from frappe.utils import cint
 
 def boot_session(bootinfo):
 	"""boot session - send website info if guest"""
-	import frappe
 
 	bootinfo.custom_css = frappe.db.get_value('Style Settings', None, 'custom_css') or ''
 	bootinfo.website_settings = frappe.get_doc('Website Settings')
 
 	if frappe.session['user']!='Guest':
-		bootinfo.letter_heads = get_letter_heads()
-
 		update_page_info(bootinfo)
 
 		load_country_and_currency(bootinfo)
+		bootinfo.sysdefaults.territory = frappe.db.get_single_value('Selling Settings',
+			'territory')
+		bootinfo.sysdefaults.customer_group = frappe.db.get_single_value('Selling Settings',
+			'customer_group')
+		bootinfo.sysdefaults.allow_stale = cint(frappe.db.get_single_value('Accounts Settings',
+			'allow_stale'))
 
 		bootinfo.notification_settings = frappe.get_doc("Notification Control",
 			"Notification Control")
@@ -29,47 +33,43 @@ def boot_session(bootinfo):
 			bootinfo.setup_complete = frappe.db.sql("""select name from
 				tabCompany limit 1""") and 'Yes' or 'No'
 
-		bootinfo.docs += frappe.db.sql("""select name, default_currency, cost_center
-            from `tabCompany`""", as_dict=1, update={"doctype":":Company"})
+		bootinfo.docs += frappe.db.sql("""select name, default_currency, cost_center, default_terms,
+			default_letter_head, default_bank_account, enable_perpetual_inventory from `tabCompany`""",
+			as_dict=1, update={"doctype":":Company"})
 
 def load_country_and_currency(bootinfo):
 	country = frappe.db.get_default("country")
 	if country and frappe.db.exists("Country", country):
 		bootinfo.docs += [frappe.get_doc("Country", country)]
 
-	bootinfo.docs += frappe.db.sql("""select * from tabCurrency
-		where ifnull(enabled,0)=1""", as_dict=1, update={"doctype":":Currency"})
-
-def get_letter_heads():
-	import frappe
-	ret = frappe.db.sql("""select name, content from `tabLetter Head`
-		where ifnull(disabled,0)=0""")
-	return dict(ret)
+	bootinfo.docs += frappe.db.sql("""select name, fraction, fraction_units,
+		number_format, smallest_currency_fraction_value, symbol from tabCurrency
+		where enabled=1""", as_dict=1, update={"doctype":":Currency"})
 
 def update_page_info(bootinfo):
 	bootinfo.page_info.update({
 		"Chart of Accounts": {
 			"title": "Chart of Accounts",
-			"route": "Accounts Browser/Account"
+			"route": "Tree/Account"
 		},
 		"Chart of Cost Centers": {
 			"title": "Chart of Cost Centers",
-			"route": "Accounts Browser/Cost Center"
+			"route": "Tree/Cost Center"
 		},
 		"Item Group Tree": {
 			"title": "Item Group Tree",
-			"route": "Sales Browser/Item Group"
+			"route": "Tree/Item Group"
 		},
 		"Customer Group Tree": {
 			"title": "Customer Group Tree",
-			"route": "Sales Browser/Customer Group"
+			"route": "Tree/Customer Group"
 		},
 		"Territory Tree": {
 			"title": "Territory Tree",
-			"route": "Sales Browser/Territory"
+			"route": "Tree/Territory"
 		},
 		"Sales Person Tree": {
 			"title": "Sales Person Tree",
-			"route": "Sales Browser/Sales Person"
+			"route": "Tree/Sales Person"
 		}
 	})

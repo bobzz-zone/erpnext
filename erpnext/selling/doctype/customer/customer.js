@@ -1,96 +1,106 @@
-// Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+// Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 // License: GNU General Public License v3. See license.txt
 
-cur_frm.cscript.onload = function(doc, dt, dn) {
-	cur_frm.cscript.load_defaults(doc, dt, dn);
-}
+frappe.ui.form.on("Customer", {
+	setup: function(frm) {
+		frm.add_fetch('lead_name', 'company_name', 'customer_name');
+		frm.add_fetch('default_sales_partner','commission_rate','default_commission_rate');
 
-cur_frm.cscript.load_defaults = function(doc, dt, dn) {
-	doc = locals[doc.doctype][doc.name];
-	if(!(doc.__islocal && doc.lead_name)) { return; }
+		frm.set_query('customer_group', {'is_group': 0});
+		frm.set_query('default_price_list', { 'selling': 1});
+		frm.set_query('account', 'accounts', function(doc, cdt, cdn) {
+			var d  = locals[cdt][cdn];
+			var filters = {
+				'account_type': 'Receivable',
+				'company': d.company,
+				"is_group": 0
+			};
 
-	var fields_to_refresh = frappe.model.set_default_values(doc);
-	if(fields_to_refresh) { refresh_many(fields_to_refresh); }
-}
-
-cur_frm.add_fetch('lead_name', 'company_name', 'customer_name');
-cur_frm.add_fetch('default_sales_partner','commission_rate','default_commission_rate');
-
-cur_frm.cscript.refresh = function(doc, dt, dn) {
-	cur_frm.cscript.setup_dashboard(doc);
-
-	if(frappe.defaults.get_default("cust_master_name")!="Naming Series") {
-		cur_frm.toggle_display("naming_series", false);
-	} else {
-		erpnext.toggle_naming_series();
-	}
-
-	if(doc.__islocal){
-		hide_field(['address_html','contact_html']);
-	}else{
-		unhide_field(['address_html','contact_html']);
-		// make lists
-
-		erpnext.utils.render_address_and_contact(cur_frm)
-
-		cur_frm.communication_view = new frappe.views.CommunicationList({
-			parent: cur_frm.fields_dict.communication_html.wrapper,
-			doc: doc,
-		});
-	}
-}
-
-cur_frm.cscript.validate = function(doc, dt, dn) {
-	if(doc.lead_name) frappe.model.clear_doc("Lead", doc.lead_name);
-}
-
-cur_frm.cscript.setup_dashboard = function(doc) {
-	cur_frm.dashboard.reset(doc);
-	if(doc.__islocal)
-		return;
-	if (in_list(user_roles, "Accounts User") || in_list(user_roles, "Accounts Manager"))
-		cur_frm.dashboard.set_headline('<span class="text-muted">'+ __('Loading...')+ '</span>')
-
-	cur_frm.dashboard.add_doctype_badge("Opportunity", "customer");
-	cur_frm.dashboard.add_doctype_badge("Quotation", "customer");
-	cur_frm.dashboard.add_doctype_badge("Sales Order", "customer");
-	cur_frm.dashboard.add_doctype_badge("Delivery Note", "customer");
-	cur_frm.dashboard.add_doctype_badge("Sales Invoice", "customer");
-
-	return frappe.call({
-		type: "GET",
-		method: "erpnext.selling.doctype.customer.customer.get_dashboard_info",
-		args: {
-			customer: cur_frm.doc.name
-		},
-		callback: function(r) {
-			if (in_list(user_roles, "Accounts User") || in_list(user_roles, "Accounts Manager")) {
-				cur_frm.dashboard.set_headline(
-					__("Total Billing This Year: ") + "<b>"
-					+ format_currency(r.message.total_billing, erpnext.get_currency(cur_frm.doc.company))
-					+ '</b> / <span class="text-muted">' + __("Unpaid") + ": <b>"
-					+ format_currency(r.message.total_unpaid, erpnext.get_currency(cur_frm.doc.company))
-					+ '</b></span>');
+			if(doc.party_account_currency) {
+				$.extend(filters, {"account_currency": doc.party_account_currency});
 			}
-			cur_frm.dashboard.set_badge_count(r.message);
+
+			return {
+				filters: filters
+			}
+		});
+
+		frm.set_query('customer_primary_contact', function(doc) {
+			return {
+				query: "erpnext.selling.doctype.customer.customer.get_customer_primary_contact",
+				filters: {
+					'customer': doc.name
+				}
+			}
+		})
+		frm.set_query('customer_primary_address', function(doc) {
+			return {
+				query: "erpnext.selling.doctype.customer.customer.get_customer_primary_address",
+				filters: {
+					'customer': doc.name
+				}
+			}
+		})
+	},
+	customer_primary_address: function(frm){
+		if(frm.doc.customer_primary_address){
+			frappe.call({
+				method: 'frappe.contacts.doctype.address.address.get_address_display',
+				args: {
+					"address_dict": frm.doc.customer_primary_address
+				},
+				callback: function(r) {
+					frm.set_value("primary_address", r.message);
+				}
+			});
 		}
-	});
-}
+		if(!frm.doc.customer_primary_address){
+			frm.set_value("primary_address", "");
+		}
+	},
+	customer_primary_contact: function(frm){
+		if(!frm.doc.customer_primary_contact){
+			frm.set_value("mobile_no", "");
+			frm.set_value("email_id", "");
+		}
+	},
 
-cur_frm.fields_dict['customer_group'].get_query = function(doc, dt, dn) {
-	return{
-		filters:{'is_group': 'No'}
-	}
-}
+	refresh: function(frm) {
+		if(frappe.defaults.get_default("cust_master_name")!="Naming Series") {
+			frm.toggle_display("naming_series", false);
+		} else {
+			erpnext.toggle_naming_series();
+		}
 
-cur_frm.fields_dict.lead_name.get_query = function(doc, cdt, cdn) {
-	return{
-		query: "erpnext.controllers.queries.lead_query"
-	}
-}
+		frappe.dynamic_link = {doc: frm.doc, fieldname: 'name', doctype: 'Customer'}
 
-cur_frm.fields_dict['default_price_list'].get_query = function(doc, cdt, cdn) {
-	return{
-		filters:{'selling': 1}
-	}
-}
+		frm.toggle_display(['address_html','contact_html','primary_address_and_contact_detail'], !frm.doc.__islocal);
+
+		if(!frm.doc.__islocal) {
+			frappe.contacts.render_address_and_contact(frm);
+
+			// custom buttons
+			frm.add_custom_button(__('Accounting Ledger'), function() {
+				frappe.set_route('query-report', 'General Ledger',
+					{party_type:'Customer', party:frm.doc.name});
+			});
+
+			frm.add_custom_button(__('Accounts Receivable'), function() {
+				frappe.set_route('query-report', 'Accounts Receivable', {customer:frm.doc.name});
+			});
+
+			// indicator
+			erpnext.utils.set_party_dashboard_indicators(frm);
+
+		} else {
+			frappe.contacts.clear_address_and_contact(frm);
+		}
+
+		var grid = cur_frm.get_field("sales_team").grid;
+		grid.set_column_disp("allocated_amount", false);
+		grid.set_column_disp("incentives", false);
+	},
+	validate: function(frm) {
+		if(frm.doc.lead_name) frappe.model.clear_doc("Lead", frm.doc.lead_name);
+	},
+});

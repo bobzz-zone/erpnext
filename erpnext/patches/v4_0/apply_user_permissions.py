@@ -1,4 +1,4 @@
-# Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+# Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
 from __future__ import unicode_literals
@@ -12,8 +12,6 @@ def execute():
 	frappe.clear_cache()
 
 def update_hr_permissions():
-	from frappe.core.page.user_permissions import user_permissions
-
 	# add set user permissions rights to HR Manager
 	frappe.db.sql("""update `tabDocPerm` set `set_user_permissions`=1 where parent in ('Employee', 'Leave Application')
 		and role='HR Manager' and permlevel=0 and `read`=1""")
@@ -28,7 +26,7 @@ def update_hr_permissions():
 	for employee in frappe.db.sql_list("""select name from `tabEmployee` where docstatus < 2"""):
 		try:
 			emp = frappe.get_doc("Employee", employee)
-			emp.ignore_mandatory = True
+			emp.flags.ignore_mandatory = True
 			emp.save()
 		except EmployeeUserDisabledError:
 			pass

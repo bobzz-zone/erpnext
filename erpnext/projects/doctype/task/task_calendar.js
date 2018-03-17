@@ -1,4 +1,4 @@
-// Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+// Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 // License: GNU General Public License v3. See license.txt
 
 frappe.views.calendar["Task"] = {
@@ -7,7 +7,8 @@ frappe.views.calendar["Task"] = {
 		"end": "exp_end_date",
 		"id": "name",
 		"title": "subject",
-		"allDay": "allDay"
+		"allDay": "allDay",
+		"progress": "progress"
 	},
 	gantt: true,
 	filters: [
@@ -18,5 +19,5 @@ frappe.views.calendar["Task"] = {
 			"label": __("Project")
 		}
 	],
-	get_events_method: "erpnext.projects.doctype.task.task.get_events"
+	get_events_method: "frappe.desk.calendar.get_events"
 }

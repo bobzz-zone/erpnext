@@ -1,286 +1,106 @@
-# Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+# Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
 from __future__ import unicode_literals
 import frappe
-from frappe.utils import cint, flt, rounded, cstr, comma_or
-from erpnext.setup.utils import get_company_currency
+from frappe.utils import cint, flt, cstr, comma_or
 from frappe import _, throw
-from erpnext.stock.get_item_details import get_available_qty
+from erpnext.stock.get_item_details import get_bin_details
+from erpnext.stock.utils import get_incoming_rate
+from erpnext.stock.get_item_details import get_conversion_factor
 
 from erpnext.controllers.stock_controller import StockController
 
 class SellingController(StockController):
 	def __setup__(self):
-		if hasattr(self, "fname"):
-			self.table_print_templates = {
-				self.fname: "templates/print_formats/includes/item_grid.html",
-				"other_charges": "templates/print_formats/includes/taxes.html",
+		if hasattr(self, "taxes"):
+			self.flags.print_taxes_with_zero_amount = cint(frappe.db.get_single_value("Print Settings",
+				 "print_taxes_with_zero_amount"))
+			self.flags.show_inclusive_tax_in_print = self.is_inclusive_tax()
+
+			self.print_templates = {
+				"total": "templates/print_formats/includes/total.html",
+				"taxes": "templates/print_formats/includes/taxes.html"
 			}
 
+	def get_feed(self):
+		return _("To {0} | {1} {2}").format(self.customer_name, self.currency,
+			self.grand_total)
+
 	def onload(self):
+		super(SellingController, self).onload()
 		if self.doctype in ("Sales Order", "Delivery Note", "Sales Invoice"):
-			for item in self.get(self.fname):
-				item.update(get_available_qty(item.item_code,
-					item.warehouse))
+			for item in self.get("items"):
+				item.update(get_bin_details(item.item_code, item.warehouse))
 
 	def validate(self):
 		super(SellingController, self).validate()
 		self.validate_max_discount()
+		self.validate_selling_price()
+		self.set_qty_as_per_stock_uom()
 		check_active_sales_items(self)
-
-	def get_sender(self, comm):
-		sender = None
-		if cint(frappe.db.get_value('Sales Email Settings', None, 'extract_emails')):
-			sender = frappe.db.get_value('Sales Email Settings', None, 'email_id')
-
-		return sender or comm.sender or frappe.session.user
 
 	def set_missing_values(self, for_validate=False):
 		super(SellingController, self).set_missing_values(for_validate)
 
 		# set contact and address details for customer, if they are not mentioned
 		self.set_missing_lead_customer_details()
-		self.set_price_list_and_item_details()
-		if self.get("__islocal"):
-			self.set_taxes("other_charges", "taxes_and_charges")
+		self.set_price_list_and_item_details(for_validate=for_validate)
 
 	def set_missing_lead_customer_details(self):
 		if getattr(self, "customer", None):
 			from erpnext.accounts.party import _get_party_details
 			party_details = _get_party_details(self.customer,
-				ignore_permissions=getattr(self, "ignore_permissions", None))
+				ignore_permissions=self.flags.ignore_permissions,
+				doctype=self.doctype, company=self.company)
 			if not self.meta.get_field("sales_team"):
 				party_details.pop("sales_team")
 
 			self.update_if_missing(party_details)
 
 		elif getattr(self, "lead", None):
-			from erpnext.selling.doctype.lead.lead import get_lead_details
-			self.update_if_missing(get_lead_details(self.lead))
+			from erpnext.crm.doctype.lead.lead import get_lead_details
+			self.update_if_missing(get_lead_details(
+				self.lead,
+				posting_date=self.get('transaction_date') or self.get('posting_date'),
+				company=self.company))
 
-	def set_price_list_and_item_details(self):
+	def set_price_list_and_item_details(self, for_validate=False):
 		self.set_price_list_currency("Selling")
-		self.set_missing_item_details()
-
-	def apply_shipping_rule(self):
-		if self.shipping_rule:
-			shipping_rule = frappe.get_doc("Shipping Rule", self.shipping_rule)
-			value = self.net_total
-
-			# TODO
-			# shipping rule calculation based on item's net weight
-
-			shipping_amount = 0.0
-			for condition in shipping_rule.get("shipping_rule_conditions"):
-				if not condition.to_value or (flt(condition.from_value) <= value <= flt(condition.to_value)):
-					shipping_amount = condition.shipping_amount
-					break
-
-			shipping_charge = {
-				"doctype": "Sales Taxes and Charges",
-				"charge_type": "Actual",
-				"account_head": shipping_rule.account,
-				"cost_center": shipping_rule.cost_center
-			}
-
-			existing_shipping_charge = self.get("other_charges", filters=shipping_charge)
-			if existing_shipping_charge:
-				# take the last record found
-				existing_shipping_charge[-1].rate = shipping_amount
-			else:
-				shipping_charge["rate"] = shipping_amount
-				shipping_charge["description"] = shipping_rule.label
-				self.append("other_charges", shipping_charge)
-
-			self.calculate_taxes_and_totals()
+		self.set_missing_item_details(for_validate=for_validate)
 
 	def remove_shipping_charge(self):
 		if self.shipping_rule:
 			shipping_rule = frappe.get_doc("Shipping Rule", self.shipping_rule)
-			existing_shipping_charge = self.get("other_charges", {
+			existing_shipping_charge = self.get("taxes", {
 				"doctype": "Sales Taxes and Charges",
 				"charge_type": "Actual",
 				"account_head": shipping_rule.account,
 				"cost_center": shipping_rule.cost_center
 			})
 			if existing_shipping_charge:
-				self.get("other_charges").remove(existing_shipping_charge[-1])
+				self.get("taxes").remove(existing_shipping_charge[-1])
 				self.calculate_taxes_and_totals()
 
 	def set_total_in_words(self):
 		from frappe.utils import money_in_words
-		company_currency = get_company_currency(self.company)
 
-		disable_rounded_total = cint(frappe.db.get_value("Global Defaults", None,
-			"disable_rounded_total"))
+		if self.meta.get_field("base_in_words"):
+			base_amount = abs(self.base_grand_total
+				if self.is_rounded_total_disabled() else self.base_rounded_total)
+			self.base_in_words = money_in_words(base_amount, self.company_currency)
 
 		if self.meta.get_field("in_words"):
-			self.in_words = money_in_words(disable_rounded_total and
-				self.grand_total or self.rounded_total, company_currency)
-		if self.meta.get_field("in_words_export"):
-			self.in_words_export = money_in_words(disable_rounded_total and
-				self.grand_total_export or self.rounded_total_export, self.currency)
-
-	def calculate_taxes_and_totals(self):
-		self.other_fname = "other_charges"
-
-		super(SellingController, self).calculate_taxes_and_totals()
-
-		self.calculate_total_advance("Sales Invoice", "advance_adjustment_details")
-		self.calculate_commission()
-		self.calculate_contribution()
-
-	def determine_exclusive_rate(self):
-		if not any((cint(tax.included_in_print_rate) for tax in self.tax_doclist)):
-			# no inclusive tax
-			return
-
-		for item in self.item_doclist:
-			item_tax_map = self._load_item_tax_rate(item.item_tax_rate)
-			cumulated_tax_fraction = 0
-			for i, tax in enumerate(self.tax_doclist):
-				tax.tax_fraction_for_current_item = self.get_current_tax_fraction(tax, item_tax_map)
-
-				if i==0:
-					tax.grand_total_fraction_for_current_item = 1 + tax.tax_fraction_for_current_item
-				else:
-					tax.grand_total_fraction_for_current_item = \
-						self.tax_doclist[i-1].grand_total_fraction_for_current_item \
-						+ tax.tax_fraction_for_current_item
-
-				cumulated_tax_fraction += tax.tax_fraction_for_current_item
-
-			if cumulated_tax_fraction and not self.discount_amount_applied and item.qty:
-				item.base_amount = flt((item.amount * self.conversion_rate) /
-					(1 + cumulated_tax_fraction), self.precision("base_amount", item))
-
-				item.base_rate = flt(item.base_amount / item.qty, self.precision("base_rate", item))
-				item.discount_percentage = flt(item.discount_percentage, self.precision("discount_percentage", item))
-
-				if item.discount_percentage == 100:
-					item.base_price_list_rate = item.base_rate
-					item.base_rate = 0.0
-				else:
-					item.base_price_list_rate = flt(item.base_rate / (1 - (item.discount_percentage / 100.0)),
-						self.precision("base_price_list_rate", item))
-
-	def get_current_tax_fraction(self, tax, item_tax_map):
-		"""
-			Get tax fraction for calculating tax exclusive amount
-			from tax inclusive amount
-		"""
-		current_tax_fraction = 0
-
-		if cint(tax.included_in_print_rate):
-			tax_rate = self._get_tax_rate(tax, item_tax_map)
-
-			if tax.charge_type == "On Net Total":
-				current_tax_fraction = tax_rate / 100.0
-
-			elif tax.charge_type == "On Previous Row Amount":
-				current_tax_fraction = (tax_rate / 100.0) * \
-					self.tax_doclist[cint(tax.row_id) - 1].tax_fraction_for_current_item
-
-			elif tax.charge_type == "On Previous Row Total":
-				current_tax_fraction = (tax_rate / 100.0) * \
-					self.tax_doclist[cint(tax.row_id) - 1].grand_total_fraction_for_current_item
-
-		return current_tax_fraction
-
-	def calculate_item_values(self):
-		if not self.discount_amount_applied:
-			for item in self.item_doclist:
-				self.round_floats_in(item)
-
-				if item.discount_percentage == 100:
-					item.rate = 0
-				elif not item.rate:
-					item.rate = flt(item.price_list_rate * (1.0 - (item.discount_percentage / 100.0)),
-						self.precision("rate", item))
-
-				item.amount = flt(item.rate * item.qty,
-					self.precision("amount", item))
-
-				self._set_in_company_currency(item, "price_list_rate", "base_price_list_rate")
-				self._set_in_company_currency(item, "rate", "base_rate")
-				self._set_in_company_currency(item, "amount", "base_amount")
-
-	def calculate_net_total(self):
-		self.net_total = self.net_total_export = 0.0
-
-		for item in self.item_doclist:
-			self.net_total += item.base_amount
-			self.net_total_export += item.amount
-
-		self.round_floats_in(self, ["net_total", "net_total_export"])
-
-	def calculate_totals(self):
-		self.grand_total = flt(self.tax_doclist[-1].total if self.tax_doclist else self.net_total)
-
-		self.grand_total_export = flt(self.grand_total / self.conversion_rate)
-
-		self.other_charges_total = flt(self.grand_total - self.net_total, self.precision("other_charges_total"))
-
-		self.other_charges_total_export = flt(self.grand_total_export - self.net_total_export +
-			flt(self.discount_amount), self.precision("other_charges_total_export"))
-
-		self.grand_total = flt(self.grand_total, self.precision("grand_total"))
-		self.grand_total_export = flt(self.grand_total_export, self.precision("grand_total_export"))
-
-		self.rounded_total = rounded(self.grand_total)
-		self.rounded_total_export = rounded(self.grand_total_export)
-
-	def apply_discount_amount(self):
-		if self.discount_amount:
-			self.base_discount_amount = flt(self.discount_amount * self.conversion_rate, self.precision("base_discount_amount"))
-
-			grand_total_for_discount_amount = self.get_grand_total_for_discount_amount()
-
-			if grand_total_for_discount_amount:
-				# calculate item amount after Discount Amount
-				for item in self.item_doclist:
-					distributed_amount = flt(self.base_discount_amount) * item.base_amount / grand_total_for_discount_amount
-					item.base_amount = flt(item.base_amount - distributed_amount, self.precision("base_amount", item))
-
-				self.discount_amount_applied = True
-				self._calculate_taxes_and_totals()
-		else:
-			self.base_discount_amount = 0
-
-	def get_grand_total_for_discount_amount(self):
-		actual_taxes_dict = {}
-
-		for tax in self.tax_doclist:
-			if tax.charge_type == "Actual":
-				actual_taxes_dict.setdefault(tax.idx, tax.tax_amount)
-			elif tax.row_id in actual_taxes_dict:
-				actual_tax_amount = flt(actual_taxes_dict.get(tax.row_id, 0)) * \
-					flt(tax.rate) / 100
-				actual_taxes_dict.setdefault(tax.idx, actual_tax_amount)
-
-		grand_total_for_discount_amount = flt(self.grand_total - sum(actual_taxes_dict.values()),
-			self.precision("grand_total"))
-		return grand_total_for_discount_amount
-
-	def calculate_outstanding_amount(self):
-		# NOTE:
-		# write_off_amount is only for POS Invoice
-		# total_advance is only for non POS Invoice
-		if self.doctype == "Sales Invoice" and self.docstatus == 0:
-			self.round_floats_in(self, ["grand_total", "total_advance", "write_off_amount",
-				"paid_amount"])
-			total_amount_to_pay = self.grand_total - self.write_off_amount
-			self.outstanding_amount = flt(total_amount_to_pay - self.total_advance \
-				- self.paid_amount,	self.precision("outstanding_amount"))
+			amount = abs(self.grand_total if self.is_rounded_total_disabled() else self.rounded_total)
+			self.in_words = money_in_words(amount, self.currency)
 
 	def calculate_commission(self):
 		if self.meta.get_field("commission_rate"):
-			self.round_floats_in(self, ["net_total", "commission_rate"])
+			self.round_floats_in(self, ["base_net_total", "commission_rate"])
 			if self.commission_rate > 100.0:
 				throw(_("Commission rate cannot be greater than 100"))
 
-			self.total_commission = flt(self.net_total * self.commission_rate / 100.0,
+			self.total_commission = flt(self.base_net_total * self.commission_rate / 100.0,
 				self.precision("total_commission"))
 
 	def calculate_contribution(self):
@@ -293,7 +113,7 @@ class SellingController(StockController):
 			self.round_floats_in(sales_person)
 
 			sales_person.allocated_amount = flt(
-				self.net_total * sales_person.allocated_percentage / 100.0,
+				self.base_net_total * sales_person.allocated_percentage / 100.0,
 				self.precision("allocated_amount", sales_person))
 
 			total += sales_person.allocated_percentage
@@ -308,104 +128,113 @@ class SellingController(StockController):
 		elif self.order_type not in valid_types:
 			throw(_("Order Type must be one of {0}").format(comma_or(valid_types)))
 
-	def check_credit(self, grand_total):
-		customer_account = frappe.db.get_value("Account", {"company": self.company,
-			"master_name": self.customer}, "name")
-		if customer_account:
-			invoice_outstanding = frappe.db.sql("""select
-				sum(ifnull(debit, 0)) - sum(ifnull(credit, 0))
-				from `tabGL Entry` where account = %s""", customer_account)
-			invoice_outstanding = flt(invoice_outstanding[0][0]) if invoice_outstanding else 0
-
-			ordered_amount_to_be_billed = frappe.db.sql("""
-				select sum(grand_total*(100 - ifnull(per_billed, 0))/100)
-				from `tabSales Order`
-				where customer=%s and docstatus = 1
-				and ifnull(per_billed, 0) < 100 and status != 'Stopped'""", self.customer)
-
-			ordered_amount_to_be_billed = flt(ordered_amount_to_be_billed[0][0]) \
-				if ordered_amount_to_be_billed else 0.0
-
-			total_outstanding = invoice_outstanding + ordered_amount_to_be_billed
-
-			frappe.get_doc('Account', customer_account).check_credit_limit(total_outstanding)
-
 	def validate_max_discount(self):
-		for d in self.get(self.fname):
+		for d in self.get("items"):
 			discount = flt(frappe.db.get_value("Item", d.item_code, "max_discount"))
 
 			if discount and flt(d.discount_percentage) > discount:
 				frappe.throw(_("Maxiumm discount for Item {0} is {1}%").format(d.item_code, discount))
 
+	def set_qty_as_per_stock_uom(self):
+		for d in self.get("items"):
+			if d.meta.get_field("stock_qty"):
+				if not d.conversion_factor:
+					frappe.throw(_("Row {0}: Conversion Factor is mandatory").format(d.idx))
+				d.stock_qty = flt(d.qty) * flt(d.conversion_factor)
+
+	def validate_selling_price(self):
+		def throw_message(item_name, rate, ref_rate_field):
+			frappe.throw(_("""Selling rate for item {0} is lower than its {1}. Selling rate should be atleast {2}""")
+				.format(item_name, ref_rate_field, rate))
+
+		if not frappe.db.get_single_value("Selling Settings", "validate_selling_price"):
+			return
+
+		if hasattr(self, "is_return") and self.is_return:
+			return
+
+		for it in self.get("items"):
+			if not it.item_code:
+				continue
+
+			last_purchase_rate, is_stock_item = frappe.db.get_value("Item", it.item_code, ["last_purchase_rate", "is_stock_item"])
+			last_purchase_rate_in_sales_uom = last_purchase_rate / (it.conversion_factor or 1)
+			if flt(it.base_rate) < flt(last_purchase_rate_in_sales_uom):
+				throw_message(it.item_name, last_purchase_rate_in_sales_uom, "last purchase rate")
+
+			last_valuation_rate = frappe.db.sql("""
+				SELECT valuation_rate FROM `tabStock Ledger Entry` WHERE item_code = %s
+				AND warehouse = %s AND valuation_rate > 0
+				ORDER BY posting_date DESC, posting_time DESC, name DESC LIMIT 1
+				""", (it.item_code, it.warehouse))
+			if last_valuation_rate:
+				last_valuation_rate_in_sales_uom = last_valuation_rate[0][0] / (it.conversion_factor or 1)
+				if is_stock_item and flt(it.base_rate) < flt(last_valuation_rate_in_sales_uom):
+					throw_message(it.name, last_valuation_rate_in_sales_uom, "valuation rate")
+
+
 	def get_item_list(self):
 		il = []
-		for d in self.get(self.fname):
-			reserved_warehouse = ""
-			reserved_qty_for_main_item = 0
-
+		for d in self.get("items"):
 			if d.qty is None:
 				frappe.throw(_("Row {0}: Qty is mandatory").format(d.idx))
 
-			if self.doctype == "Sales Order":
-				if (frappe.db.get_value("Item", d.item_code, "is_stock_item") == 'Yes' or
-					self.has_sales_bom(d.item_code)) and not d.warehouse:
-						frappe.throw(_("Reserved Warehouse required for stock Item {0} in row {1}").format(d.item_code, d.idx))
-				reserved_warehouse = d.warehouse
-				if flt(d.qty) > flt(d.delivered_qty):
-					reserved_qty_for_main_item = flt(d.qty) - flt(d.delivered_qty)
-
-			elif self.doctype == "Delivery Note" and d.against_sales_order:
-				# if SO qty is 10 and there is tolerance of 20%, then it will allow DN of 12.
-				# But in this case reserved qty should only be reduced by 10 and not 12
-
-				already_delivered_qty = self.get_already_delivered_qty(self.name,
-					d.against_sales_order, d.prevdoc_detail_docname)
-				so_qty, reserved_warehouse = self.get_so_qty_and_warehouse(d.prevdoc_detail_docname)
-
-				if already_delivered_qty + d.qty > so_qty:
-					reserved_qty_for_main_item = -(so_qty - already_delivered_qty)
-				else:
-					reserved_qty_for_main_item = -flt(d.qty)
-
-			if self.has_sales_bom(d.item_code):
-				for p in self.get("packing_details"):
+			if self.has_product_bundle(d.item_code):
+				for p in self.get("packed_items"):
 					if p.parent_detail_docname == d.name and p.parent_item == d.item_code:
 						# the packing details table's qty is already multiplied with parent's qty
 						il.append(frappe._dict({
-							'warehouse': p.warehouse,
-							'reserved_warehouse': reserved_warehouse,
+							'warehouse': p.warehouse or d.warehouse,
 							'item_code': p.item_code,
 							'qty': flt(p.qty),
-							'reserved_qty': (flt(p.qty)/flt(d.qty)) * reserved_qty_for_main_item,
 							'uom': p.uom,
 							'batch_no': cstr(p.batch_no).strip(),
 							'serial_no': cstr(p.serial_no).strip(),
-							'name': d.name
+							'name': d.name,
+							'target_warehouse': p.target_warehouse,
+							'company': self.company,
+							'voucher_type': self.doctype,
+							'allow_zero_valuation': d.allow_zero_valuation_rate
 						}))
 			else:
 				il.append(frappe._dict({
 					'warehouse': d.warehouse,
-					'reserved_warehouse': reserved_warehouse,
 					'item_code': d.item_code,
-					'qty': d.qty,
-					'reserved_qty': reserved_qty_for_main_item,
-					'uom': d.stock_uom,
+					'qty': d.stock_qty,
+					'uom': d.uom,
+					'stock_uom': d.stock_uom,
+					'conversion_factor': d.conversion_factor,
 					'batch_no': cstr(d.get("batch_no")).strip(),
 					'serial_no': cstr(d.get("serial_no")).strip(),
-					'name': d.name
+					'name': d.name,
+					'target_warehouse': d.target_warehouse,
+					'company': self.company,
+					'voucher_type': self.doctype,
+					'allow_zero_valuation': d.allow_zero_valuation_rate
 				}))
 		return il
 
-	def has_sales_bom(self, item_code):
-		return frappe.db.sql("""select name from `tabSales BOM`
+	def has_product_bundle(self, item_code):
+		return frappe.db.sql("""select name from `tabProduct Bundle`
 			where new_item_code=%s and docstatus != 2""", item_code)
 
-	def get_already_delivered_qty(self, dn, so, so_detail):
-		qty = frappe.db.sql("""select sum(qty) from `tabDelivery Note Item`
-			where prevdoc_detail_docname = %s and docstatus = 1
+	def get_already_delivered_qty(self, current_docname, so, so_detail):
+		delivered_via_dn = frappe.db.sql("""select sum(qty) from `tabDelivery Note Item`
+			where so_detail = %s and docstatus = 1
 			and against_sales_order = %s
-			and parent != %s""", (so_detail, so, dn))
-		return qty and flt(qty[0][0]) or 0.0
+			and parent != %s""", (so_detail, so, current_docname))
+
+		delivered_via_si = frappe.db.sql("""select sum(si_item.qty)
+			from `tabSales Invoice Item` si_item, `tabSales Invoice` si
+			where si_item.parent = si.name and si.update_stock = 1
+			and si_item.so_detail = %s and si.docstatus = 1
+			and si_item.sales_order = %s
+			and si.name != %s""", (so_detail, so, current_docname))
+
+		total_delivered_qty = (flt(delivered_via_dn[0][0]) if delivered_via_dn else 0) \
+			+ (flt(delivered_via_si[0][0]) if delivered_via_si else 0)
+
+		return total_delivered_qty
 
 	def get_so_qty_and_warehouse(self, so_detail):
 		so_item = frappe.db.sql("""select qty, warehouse from `tabSales Order Item`
@@ -414,21 +243,99 @@ class SellingController(StockController):
 		so_warehouse = so_item and so_item[0]["warehouse"] or ""
 		return so_qty, so_warehouse
 
-	def check_stop_sales_order(self, ref_fieldname):
-		for d in self.get(self.fname):
+	def check_close_sales_order(self, ref_fieldname):
+		for d in self.get("items"):
 			if d.get(ref_fieldname):
 				status = frappe.db.get_value("Sales Order", d.get(ref_fieldname), "status")
-				if status == "Stopped":
-					frappe.throw(_("Sales Order {0} is stopped").format(d.get(ref_fieldname)))
+				if status == "Closed":
+					frappe.throw(_("Sales Order {0} is {1}").format(d.get(ref_fieldname), status))
+
+	def update_reserved_qty(self):
+		so_map = {}
+		for d in self.get("items"):
+			if d.so_detail:
+				if self.doctype == "Delivery Note" and d.against_sales_order:
+					so_map.setdefault(d.against_sales_order, []).append(d.so_detail)
+				elif self.doctype == "Sales Invoice" and d.sales_order and self.update_stock:
+					so_map.setdefault(d.sales_order, []).append(d.so_detail)
+
+		for so, so_item_rows in so_map.items():
+			if so and so_item_rows:
+				sales_order = frappe.get_doc("Sales Order", so)
+
+				if sales_order.status in ["Closed", "Cancelled"]:
+					frappe.throw(_("{0} {1} is cancelled or closed").format(_("Sales Order"), so),
+						frappe.InvalidStatusError)
+
+				sales_order.update_reserved_qty(so_item_rows)
+
+	def update_stock_ledger(self):
+		self.update_reserved_qty()
+
+		sl_entries = []
+		for d in self.get_item_list():
+			if frappe.db.get_value("Item", d.item_code, "is_stock_item") == 1 and flt(d.qty):
+				if flt(d.conversion_factor)==0.0:
+					d.conversion_factor = get_conversion_factor(d.item_code, d.uom).get("conversion_factor") or 1.0
+				return_rate = 0
+				if cint(self.is_return) and self.return_against and self.docstatus==1:
+					return_rate = self.get_incoming_rate_for_sales_return(d.item_code, self.return_against)
+
+				# On cancellation or if return entry submission, make stock ledger entry for
+				# target warehouse first, to update serial no values properly
+
+				if d.warehouse and ((not cint(self.is_return) and self.docstatus==1)
+					or (cint(self.is_return) and self.docstatus==2)):
+						sl_entries.append(self.get_sl_entries(d, {
+							"actual_qty": -1*flt(d.qty),
+							"incoming_rate": return_rate
+						}))
+
+				if d.target_warehouse:
+					target_warehouse_sle = self.get_sl_entries(d, {
+						"actual_qty": flt(d.qty),
+						"warehouse": d.target_warehouse
+					})
+
+					if self.docstatus == 1:
+						if not cint(self.is_return):
+							args = frappe._dict({
+								"item_code": d.item_code,
+								"warehouse": d.warehouse,
+								"posting_date": self.posting_date,
+								"posting_time": self.posting_time,
+								"qty": -1*flt(d.qty),
+								"serial_no": d.serial_no,
+								"company": d.company,
+								"voucher_type": d.voucher_type,
+								"voucher_no": d.name,
+								"allow_zero_valuation": d.allow_zero_valuation
+							})
+							target_warehouse_sle.update({
+								"incoming_rate": get_incoming_rate(args)
+							})
+						else:
+							target_warehouse_sle.update({
+								"outgoing_rate": return_rate
+							})
+					sl_entries.append(target_warehouse_sle)
+
+				if d.warehouse and ((not cint(self.is_return) and self.docstatus==2)
+					or (cint(self.is_return) and self.docstatus==1)):
+						sl_entries.append(self.get_sl_entries(d, {
+							"actual_qty": -1*flt(d.qty),
+							"incoming_rate": return_rate
+						}))
+
+		self.make_sl_entries(sl_entries)
 
 def check_active_sales_items(obj):
-	for d in obj.get(obj.fname):
+	for d in obj.get("items"):
 		if d.item_code:
-			item = frappe.db.sql("""select docstatus, is_sales_item,
-				is_service_item, income_account from tabItem where name = %s""",
+			item = frappe.db.sql("""select docstatus,
+				income_account from tabItem where name = %s""",
 				d.item_code, as_dict=True)[0]
-			if item.is_sales_item == 'No' and item.is_service_item == 'No':
-				frappe.throw(_("Item {0} must be Sales or Service Item in {1}").format(d.item_code, d.idx))
+
 			if getattr(d, "income_account", None) and not item.income_account:
 				frappe.db.set_value("Item", d.item_code, "income_account",
 					d.income_account)

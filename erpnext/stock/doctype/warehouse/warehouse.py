@@ -1,82 +1,40 @@
-# Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+# Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
 from __future__ import unicode_literals
-import frappe
+import frappe, erpnext
 from frappe.utils import cint, validate_email_add
-from frappe import throw, msgprint, _
+from frappe import throw, _
+from frappe.utils.nestedset import NestedSet
+from erpnext.stock import get_warehouse_account
 
-from frappe.model.document import Document
-
-class Warehouse(Document):
+class Warehouse(NestedSet):
+	nsm_parent_field = 'parent_warehouse'
 
 	def autoname(self):
-		suffix = " - " + frappe.db.get_value("Company", self.company, "abbr")
-		if not self.warehouse_name.endswith(suffix):
-			self.name = self.warehouse_name + suffix
+		if self.company:
+			suffix = " - " + frappe.db.get_value("Company", self.company, "abbr")
+			if not self.warehouse_name.endswith(suffix):
+				self.name = self.warehouse_name + suffix
+		else:
+			self.name = self.warehouse_name
+
+	def onload(self):
+		'''load account name for General Ledger Report'''
+		account = self.account or get_warehouse_account(self.name, self.company)
+
+		if account:
+			self.set_onload('account', account)
 
 	def validate(self):
-		if self.email_id and not validate_email_add(self.email_id):
-				throw(_("Please enter valid Email Id"))
-
-		self.update_parent_account()
-
-	def update_parent_account(self):
-
-		if not getattr(self, "__islocal", None) \
-			and (self.create_account_under != frappe.db.get_value("Warehouse", self.name, "create_account_under")):
-
-				self.validate_parent_account()
-
-				warehouse_account = frappe.db.get_value("Account",
-					{"account_type": "Warehouse", "company": self.company, "master_name": self.name},
-					["name", "parent_account"])
-
-				if warehouse_account and warehouse_account[1] != self.create_account_under:
-					acc_doc = frappe.get_doc("Account", warehouse_account[0])
-					acc_doc.parent_account = self.create_account_under
-					acc_doc.save()
+		if self.email_id:
+			validate_email_add(self.email_id, True)
 
 	def on_update(self):
-		self.create_account_head()
+		self.update_nsm_model()
 
-	def create_account_head(self):
-		if cint(frappe.defaults.get_global_default("auto_accounting_for_stock")):
-			if not frappe.db.get_value("Account", {"account_type": "Warehouse",
-					"master_name": self.name}):
-				if self.get("__islocal") or not frappe.db.get_value(
-						"Stock Ledger Entry", {"warehouse": self.name}):
-					self.validate_parent_account()
-					ac_doc = frappe.get_doc({
-						"doctype": "Account",
-						'account_name': self.warehouse_name,
-						'parent_account': self.create_account_under,
-						'group_or_ledger':'Ledger',
-						'company':self.company,
-						"account_type": "Warehouse",
-						"master_name": self.name,
-						"freeze_account": "No"
-					})
-					ac_doc.ignore_permissions = True
-					ac_doc.insert()
-					msgprint(_("Account head {0} created").format(ac_doc.name))
-
-	def validate_parent_account(self):
-		if not self.company:
-			frappe.throw(_("Warehouse {0}: Company is mandatory").format(self.name))
-
-		if not self.create_account_under:
-			parent_account = frappe.db.get_value("Account",
-				{"account_name": "Stock Assets", "company": self.company})
-
-			if parent_account:
-				self.create_account_under = parent_account
-			else:
-				frappe.throw(_("Please enter parent account group for warehouse {0}").format(self.name))
-		elif frappe.db.get_value("Account", self.create_account_under, "company") != self.company:
-			frappe.throw(_("Warehouse {0}: Parent account {1} does not bolong to the company {2}")
-				.format(self.name, self.create_account_under, self.company))
-
+	def update_nsm_model(self):
+		frappe.utils.nestedset.update_nsm(self)
 
 	def on_trash(self):
 		# delete bin
@@ -89,19 +47,27 @@ class Warehouse(Document):
 			else:
 				frappe.db.sql("delete from `tabBin` where name = %s", d['name'])
 
-		warehouse_account = frappe.db.get_value("Account",
-			{"account_type": "Warehouse", "master_name": self.name})
-		if warehouse_account:
-			frappe.delete_doc("Account", warehouse_account)
-
-		if frappe.db.sql("""select name from `tabStock Ledger Entry`
-				where warehouse = %s""", self.name):
+		if self.check_if_sle_exists():
 			throw(_("Warehouse can not be deleted as stock ledger entry exists for this warehouse."))
 
-	def before_rename(self, olddn, newdn, merge=False):
+		if self.check_if_child_exists():
+			throw(_("Child warehouse exists for this warehouse. You can not delete this warehouse."))
+
+		self.update_nsm_model()
+
+	def check_if_sle_exists(self):
+		return frappe.db.sql("""select name from `tabStock Ledger Entry`
+			where warehouse = %s limit 1""", self.name)
+
+	def check_if_child_exists(self):
+		return frappe.db.sql("""select name from `tabWarehouse`
+			where parent_warehouse = %s limit 1""", self.name)
+
+	def before_rename(self, old_name, new_name, merge=False):
+		super(Warehouse, self).before_rename(old_name, new_name, merge)
+
 		# Add company abbr if not provided
-		from erpnext.setup.doctype.company.company import get_name_with_abbr
-		new_warehouse = get_name_with_abbr(newdn, self.company)
+		new_warehouse = erpnext.encode_company_abbr(new_name, self.company)
 
 		if merge:
 			if not frappe.db.exists("Warehouse", new_warehouse):
@@ -110,28 +76,99 @@ class Warehouse(Document):
 			if self.company != frappe.db.get_value("Warehouse", new_warehouse, "company"):
 				frappe.throw(_("Both Warehouse must belong to same Company"))
 
-			frappe.db.sql("delete from `tabBin` where warehouse=%s", olddn)
-
-		from erpnext.accounts.utils import rename_account_for
-		rename_account_for("Warehouse", olddn, newdn, merge, self.company)
-
 		return new_warehouse
 
-	def after_rename(self, olddn, newdn, merge=False):
+	def after_rename(self, old_name, new_name, merge=False):
+		super(Warehouse, self).after_rename(old_name, new_name, merge)
+
+		new_warehouse_name = self.get_new_warehouse_name_without_abbr(new_name)
+		self.db_set("warehouse_name", new_warehouse_name)
+
 		if merge:
-			self.recalculate_bin_qty(newdn)
+			self.recalculate_bin_qty(new_name)
 
-	def recalculate_bin_qty(self, newdn):
-		from erpnext.utilities.repost_stock import repost_stock
+	def get_new_warehouse_name_without_abbr(self, name):
+		company_abbr = frappe.db.get_value("Company", self.company, "abbr")
+		parts = name.rsplit(" - ", 1)
+
+		if parts[-1].lower() == company_abbr.lower():
+			name = parts[0]
+
+		return name
+
+	def recalculate_bin_qty(self, new_name):
+		from erpnext.stock.stock_balance import repost_stock
 		frappe.db.auto_commit_on_many_writes = 1
-		frappe.db.set_default("allow_negative_stock", 1)
+		existing_allow_negative_stock = frappe.db.get_value("Stock Settings", None, "allow_negative_stock")
+		frappe.db.set_value("Stock Settings", None, "allow_negative_stock", 1)
 
-		for item in frappe.db.sql("""select distinct item_code from (
-			select name as item_code from `tabItem` where ifnull(is_stock_item, 'Yes')='Yes'
-			union
-			select distinct item_code from tabBin) a"""):
-				repost_stock(item[0], newdn)
+		repost_stock_for_items = frappe.db.sql_list("""select distinct item_code
+			from tabBin where warehouse=%s""", new_name)
 
-		frappe.db.set_default("allow_negative_stock",
-			frappe.db.get_value("Stock Settings", None, "allow_negative_stock"))
+		# Delete all existing bins to avoid duplicate bins for the same item and warehouse
+		frappe.db.sql("delete from `tabBin` where warehouse=%s", new_name)
+
+		for item_code in repost_stock_for_items:
+			repost_stock(item_code, new_name)
+
+		frappe.db.set_value("Stock Settings", None, "allow_negative_stock", existing_allow_negative_stock)
 		frappe.db.auto_commit_on_many_writes = 0
+
+	def convert_to_group_or_ledger(self):
+		if self.is_group:
+			self.convert_to_ledger()
+		else:
+			self.convert_to_group()
+
+	def convert_to_ledger(self):
+		if self.check_if_child_exists():
+			frappe.throw(_("Warehouses with child nodes cannot be converted to ledger"))
+		elif self.check_if_sle_exists():
+			throw(_("Warehouses with existing transaction can not be converted to ledger."))
+		else:
+			self.is_group = 0
+			self.save()
+			return 1
+
+	def convert_to_group(self):
+		if self.check_if_sle_exists():
+			throw(_("Warehouses with existing transaction can not be converted to group."))
+		else:
+			self.is_group = 1
+			self.save()
+			return 1
+
+@frappe.whitelist()
+def get_children(doctype, parent=None, company=None, is_root=False):
+	from erpnext.stock.utils import get_stock_value_on
+
+	if is_root:
+		parent = ""
+
+	warehouses = frappe.db.sql("""select name as value,
+		is_group as expandable
+		from `tabWarehouse`
+		where docstatus < 2
+		and ifnull(`parent_warehouse`,'') = %s
+		and (`company` = %s or company is null or company = '')
+		order by name""", (parent, company), as_dict=1)
+
+	# return warehouses
+	for wh in warehouses:
+		wh["balance"] = get_stock_value_on(warehouse=wh.value)
+	return warehouses
+
+@frappe.whitelist()
+def add_node():
+	from frappe.desk.treeview import make_tree_args
+	args = make_tree_args(**frappe.form_dict)
+
+	if cint(args.is_root):
+		args.parent_warehouse = None
+
+	frappe.get_doc(args).insert()
+
+@frappe.whitelist()
+def convert_to_group_or_ledger():
+	args = frappe.form_dict
+	return frappe.get_doc("Warehouse", args.docname).convert_to_group_or_ledger()

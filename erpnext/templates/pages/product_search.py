@@ -1,39 +1,46 @@
-# Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+# Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
 from __future__ import unicode_literals
 import frappe
-from frappe.utils import cstr
+from frappe.utils import cstr, nowdate, cint
 from erpnext.setup.doctype.item_group.item_group import get_item_for_list_in_html
 
 no_cache = 1
 no_sitemap = 1
 
+def get_context(context):
+	context.show_search = True
+
 @frappe.whitelist(allow_guest=True)
-def get_product_list(search=None, start=0, limit=10):
+def get_product_list(search=None, start=0, limit=12):
+	# limit = 12 because we show 12 items in the grid view
+
 	# base query
-	query = """select name, item_name, page_name, website_image, item_group,
-			web_long_description as website_description, parent_website_route
-		from `tabItem` where show_in_website = 1"""
+	query = """select I.name, I.item_name, I.item_code, I.route, I.website_image, I.thumbnail, I.item_group,
+			I.description, I.web_long_description as website_description,
+			case when (S.actual_qty - S.reserved_qty) > 0 then 1 else 0 end as in_stock
+		from `tabItem` I
+		left join tabBin S on I.item_code = S.item_code and I.website_warehouse = S.warehouse
+		where (I.show_in_website = 1 or I.show_variant_in_website = 1)
+			and I.disabled = 0
+			and (I.end_of_life is null or I.end_of_life='0000-00-00' or I.end_of_life > %(today)s)"""
 
 	# search term condition
 	if search:
-		query += """ and (web_long_description like %(search)s
-				or description like %(search)s
-				or item_name like %(search)s
-				or name like %(search)s)"""
+		query += """ and (I.web_long_description like %(search)s
+				or I.description like %(search)s
+				or I.item_name like %(search)s
+				or I.name like %(search)s)"""
 		search = "%" + cstr(search) + "%"
 
 	# order by
-	query += """ order by weightage desc, modified desc limit %s, %s""" % (start, limit)
+	query += """ order by I.weightage desc, in_stock desc, I.item_name limit %s, %s""" % (cint(start), cint(limit))
 
 	data = frappe.db.sql(query, {
 		"search": search,
+		"today": nowdate()
 	}, as_dict=1)
-
-	for d in data:
-		d.route = ((d.parent_website_route + "/") if d.parent_website_route else "") \
-			+ d.page_name
 
 	return [get_item_for_list_in_html(r) for r in data]
 

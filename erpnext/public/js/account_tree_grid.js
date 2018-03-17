@@ -1,4 +1,4 @@
-// Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+// Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 // License: GNU General Public License v3. See license.txt
 
 // This program is free software: you can redistribute it and/or modify
@@ -18,9 +18,8 @@ erpnext.AccountTreeGrid = frappe.views.TreeGridReport.extend({
 	init: function(wrapper, title) {
 		this._super({
 			title: title,
-			page: wrapper,
 			parent: $(wrapper).find('.layout-main'),
-			appframe: wrapper.appframe,
+			page: wrapper.page,
 			doctypes: ["Company", "Fiscal Year", "Account", "GL Entry", "Cost Center"],
 			tree_grid: {
 				show: true,
@@ -67,10 +66,7 @@ erpnext.AccountTreeGrid = frappe.views.TreeGridReport.extend({
 			default_value: __("Select Fiscal Year...")},
 		{fieldtype: "Date", label: __("From Date"), fieldname: "from_date"},
 		{fieldtype: "Label", label: __("To")},
-		{fieldtype: "Date", label: __("To Date"), fieldname: "to_date"},
-		{fieldtype: "Button", label: __("Refresh"), icon:"icon-refresh icon-white",
-		 	cssClass:"btn-info"},
-		{fieldtype: "Button", label: __("Reset Filters"), icon: "icon-filter"},
+		{fieldtype: "Date", label: __("To Date"), fieldname: "to_date"}
 	],
 	setup_filters: function() {
 		this._super();
@@ -80,8 +76,8 @@ erpnext.AccountTreeGrid = frappe.views.TreeGridReport.extend({
 			var fy = $(this).val();
 			$.each(frappe.report_dump.data["Fiscal Year"], function(i, v) {
 				if (v.name==fy) {
-					me.filter_inputs.from_date.val(dateutil.str_to_user(v.year_start_date));
-					me.filter_inputs.to_date.val(dateutil.str_to_user(v.year_end_date));
+					me.filter_inputs.from_date.val(frappe.datetime.str_to_user(v.year_start_date));
+					me.filter_inputs.to_date.val(frappe.datetime.str_to_user(v.year_end_date));
 				}
 			});
 			me.refresh();
@@ -127,8 +123,8 @@ erpnext.AccountTreeGrid = frappe.views.TreeGridReport.extend({
 		var gl = frappe.report_dump.data['GL Entry'];
 		var me = this;
 
-		this.opening_date = dateutil.user_to_obj(this.filter_inputs.from_date.val());
-		this.closing_date = dateutil.user_to_obj(this.filter_inputs.to_date.val());
+		this.opening_date = frappe.datetime.user_to_obj(this.filter_inputs.from_date.val());
+		this.closing_date = frappe.datetime.user_to_obj(this.filter_inputs.to_date.val());
 		this.set_fiscal_year();
 		if (!this.fiscal_year) return;
 
@@ -138,7 +134,7 @@ erpnext.AccountTreeGrid = frappe.views.TreeGridReport.extend({
 		});
 
 		$.each(gl, function(i, v) {
-			var posting_date = dateutil.str_to_obj(v.posting_date);
+			var posting_date = frappe.datetime.str_to_obj(v.posting_date);
 			var account = me.item_by_name[v.account];
 			me.update_balances(account, posting_date, v);
 		});
@@ -149,7 +145,7 @@ erpnext.AccountTreeGrid = frappe.views.TreeGridReport.extend({
 		// opening
 		if (posting_date < this.opening_date || v.is_opening === "Yes") {
 			if (account.report_type === "Profit and Loss" &&
-				posting_date <= dateutil.str_to_obj(this.fiscal_year[1])) {
+				posting_date <= frappe.datetime.str_to_obj(this.fiscal_year[1])) {
 				// balance of previous fiscal_year should
 				//	not be part of opening of pl account balance
 			} else {
@@ -181,7 +177,7 @@ erpnext.AccountTreeGrid = frappe.views.TreeGridReport.extend({
 		var me= this;
 		$.each(this.data, function(i, account) {
 			// update groups
-			if((account.group_or_ledger == "Ledger") || (account.rgt - account.lft == 1)) {
+			if((account.is_group == 0) || (account.rgt - account.lft == 1)) {
 				var parent = me.parent_map[account.name];
 				while(parent) {
 					var parent_account = me.item_by_name[parent];
@@ -211,21 +207,21 @@ erpnext.AccountTreeGrid = frappe.views.TreeGridReport.extend({
 
 	set_fiscal_year: function() {
 		if (this.opening_date > this.closing_date) {
-			msgprint(__("Opening Date should be before Closing Date"));
+			frappe.msgprint(__("Opening Date should be before Closing Date"));
 			return;
 		}
 
 		this.fiscal_year = null;
 		var me = this;
 		$.each(frappe.report_dump.data["Fiscal Year"], function(i, v) {
-			if (me.opening_date >= dateutil.str_to_obj(v.year_start_date) &&
-				me.closing_date <= dateutil.str_to_obj(v.year_end_date)) {
-					me.fiscal_year = v;
-				}
+			if (me.opening_date >= frappe.datetime.str_to_obj(v.year_start_date) &&
+				me.closing_date <= frappe.datetime.str_to_obj(v.year_end_date)) {
+				me.fiscal_year = v;
+			}
 		});
 
 		if (!this.fiscal_year) {
-			msgprint(__("Opening Date and Closing Date should be within same Fiscal Year"));
+			frappe.msgprint(__("Opening Date and Closing Date should be within same Fiscal Year"));
 			return;
 		}
 	},

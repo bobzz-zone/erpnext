@@ -1,4 +1,4 @@
-// Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+// Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 // License: GNU General Public License v3. See license.txt
 
 window.get_product_list = function() {
@@ -13,7 +13,6 @@ window.get_product_list = function() {
 	$.ajax({
 		method: "GET",
 		url: "/",
-		dataType: "json",
 		data: {
 			cmd: "erpnext.templates.pages.product_search.get_product_list",
 			start: window.start,
@@ -22,14 +21,14 @@ window.get_product_list = function() {
 		},
 		dataType: "json",
 		success: function(data) {
-			window.render_product_list(data.message);
+			window.render_product_list(data.message || []);
 		}
 	})
 }
 
 window.render_product_list = function(data) {
+	var table = $("#search-list .table");
 	if(data.length) {
-		var table = $("#search-list .table");
 		if(!table.length)
 			var table = $("<table class='table'>").appendTo("#search-list");
 
@@ -40,10 +39,10 @@ window.render_product_list = function(data) {
 	if(data.length < 10) {
 		if(!table) {
 			$(".more-btn")
-				.replaceWith("<div class='alert alert-warning'>No products found.</div>");
+				.replaceWith("<div class='alert alert-warning'>{{ _("No products found.") }}</div>");
 		} else {
 			$(".more-btn")
-				.replaceWith("<div class='text-muted'>Nothing more to show.</div>");
+				.replaceWith("<div class='text-muted'>{{ _("Nothing more to show.") }}</div>");
 		}
 	} else {
 		$(".more-btn").toggle(true)

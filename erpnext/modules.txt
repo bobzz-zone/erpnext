@@ -1,12 +1,24 @@
 Accounts
+CRM
 Buying
-Home
-HR
-Manufacturing
 Projects
 Selling
 Setup
+HR
+Manufacturing
 Stock
 Support
 Utilities
-Contacts
+Shopping Cart
+Assets
+Hub Node
+Portal
+Maintenance
+Education
+Regional
+Healthcare
+Restaurant
+Agriculture
+ERPNext Integrations
+Non Profit
+Hotels

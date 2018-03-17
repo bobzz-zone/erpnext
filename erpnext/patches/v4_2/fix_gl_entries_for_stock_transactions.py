@@ -1,13 +1,15 @@
-# Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+# Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
-from __future__ import unicode_literals
+from __future__ import print_function, unicode_literals
 import frappe
 from frappe.utils import flt
 
 def execute():
-	from erpnext.utilities.repost_stock import repost
+	from erpnext.stock.stock_balance import repost
 	repost(allow_zero_rate=True, only_actual=True)
+	
+	frappe.reload_doctype("Account")
 
 	warehouse_account = frappe.db.sql("""select name, master_name from tabAccount
 		where ifnull(account_type, '') = 'Warehouse'""")
@@ -35,7 +37,7 @@ def execute():
 
 			if stock_bal and account_bal and abs(flt(stock_bal[0][0]) - flt(account_bal[0][0])) > 0.1:
 				try:
-					print voucher_type, voucher_no, stock_bal[0][0], account_bal[0][0]
+					print(voucher_type, voucher_no, stock_bal[0][0], account_bal[0][0])
 
 					frappe.db.sql("""delete from `tabGL Entry`
 						where voucher_type=%s and voucher_no=%s""", (voucher_type, voucher_no))
@@ -43,10 +45,10 @@ def execute():
 					voucher = frappe.get_doc(voucher_type, voucher_no)
 					voucher.make_gl_entries(repost_future_gle=False)
 					frappe.db.commit()
-				except Exception, e:
-					print frappe.get_traceback()
+				except Exception as e:
+					print(frappe.get_traceback())
 					rejected.append([voucher_type, voucher_no])
 					frappe.db.rollback()
 
-		print "Failed to repost: "
-		print rejected
+		print("Failed to repost: ")
+		print(rejected)

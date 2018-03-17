@@ -1,8 +1,140 @@
-// Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+// Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 // License: GNU General Public License v3. See license.txt
 
-frappe.require("assets/erpnext/js/controllers/stock_controller.js");
 frappe.provide("erpnext.stock");
+
+frappe.ui.form.on("Stock Reconciliation", {
+	onload: function(frm) {
+		frm.add_fetch("item_code", "item_name", "item_name");
+
+		// end of life
+		frm.set_query("item_code", "items", function(doc, cdt, cdn) {
+			return {
+				query: "erpnext.controllers.queries.item_query",
+				filters:{
+					"is_stock_item": 1,
+					"has_serial_no": 0
+				}
+			}
+		});
+
+		if (frm.doc.company) {
+			erpnext.queries.setup_queries(frm, "Warehouse", function() {
+				return erpnext.queries.warehouse(frm.doc);
+			});
+		}
+	},
+
+	refresh: function(frm) {
+		if(frm.doc.docstatus < 1) {
+			frm.add_custom_button(__("Items"), function() {
+				frm.events.get_items(frm);
+			});
+		}
+
+		if(frm.doc.company) {
+			frm.trigger("toggle_display_account_head");
+		}
+	},
+
+	get_items: function(frm) {
+		frappe.prompt({label:"Warehouse", fieldtype:"Link", options:"Warehouse", reqd: 1},
+			function(data) {
+				frappe.call({
+					method:"erpnext.stock.doctype.stock_reconciliation.stock_reconciliation.get_items",
+					args: {
+						warehouse: data.warehouse,
+						posting_date: frm.doc.posting_date,
+						posting_time: frm.doc.posting_time
+					},
+					callback: function(r) {
+						var items = [];
+						frm.clear_table("items");
+						for(var i=0; i< r.message.length; i++) {
+							var d = frm.add_child("items");
+							$.extend(d, r.message[i]);
+							if(!d.qty) d.qty = null;
+							if(!d.valuation_rate) d.valuation_rate = null;
+						}
+						frm.refresh_field("items");
+					}
+				});
+			}
+		, __("Get Items"), __("Update"));
+	},
+
+	set_valuation_rate_and_qty: function(frm, cdt, cdn) {
+		var d = frappe.model.get_doc(cdt, cdn);
+		if(d.item_code && d.warehouse) {
+			frappe.call({
+				method: "erpnext.stock.doctype.stock_reconciliation.stock_reconciliation.get_stock_balance_for",
+				args: {
+					item_code: d.item_code,
+					warehouse: d.warehouse,
+					posting_date: frm.doc.posting_date,
+					posting_time: frm.doc.posting_time
+				},
+				callback: function(r) {
+					frappe.model.set_value(cdt, cdn, "qty", r.message.qty);
+					frappe.model.set_value(cdt, cdn, "valuation_rate", r.message.rate);
+					frappe.model.set_value(cdt, cdn, "current_qty", r.message.qty);
+					frappe.model.set_value(cdt, cdn, "current_valuation_rate", r.message.rate);
+					frappe.model.set_value(cdt, cdn, "current_amount", r.message.rate * r.message.qty);
+					frappe.model.set_value(cdt, cdn, "amount", r.message.rate * r.message.qty);
+
+				}
+			});
+		}
+	},
+	set_item_code: function(doc, cdt, cdn) {
+		var d = frappe.model.get_doc(cdt, cdn);
+		if (d.barcode) {
+			frappe.call({
+				method: "erpnext.stock.get_item_details.get_item_code",
+				args: {"barcode": d.barcode },
+				callback: function(r) {
+					if (!r.exe){
+						frappe.model.set_value(cdt, cdn, "item_code", r.message);
+					}
+				}
+			});
+		}
+	},
+	set_amount_quantity: function(doc, cdt, cdn) {
+		var d = frappe.model.get_doc(cdt, cdn);
+		if (d.qty & d.valuation_rate) {
+			frappe.model.set_value(cdt, cdn, "amount", flt(d.qty) * flt(d.valuation_rate));
+			frappe.model.set_value(cdt, cdn, "quantity_difference", flt(d.qty) - flt(d.current_qty));
+			frappe.model.set_value(cdt, cdn, "amount_difference", flt(d.amount) - flt(d.current_amount));
+		}
+	},
+	company: function(frm) {
+		frm.trigger("toggle_display_account_head");
+	},
+	toggle_display_account_head: function(frm) {
+		frm.toggle_display(['expense_account', 'cost_center'],
+			erpnext.is_perpetual_inventory_enabled(frm.doc.company));
+	}
+});
+
+frappe.ui.form.on("Stock Reconciliation Item", {
+	barcode: function(frm, cdt, cdn) {
+		frm.events.set_item_code(frm, cdt, cdn);
+	},
+	warehouse: function(frm, cdt, cdn) {
+		frm.events.set_valuation_rate_and_qty(frm, cdt, cdn);
+	},
+	item_code: function(frm, cdt, cdn) {
+		frm.events.set_valuation_rate_and_qty(frm, cdt, cdn);
+	},
+	qty: function(frm, cdt, cdn) {
+		frm.events.set_amount_quantity(frm, cdt, cdn);
+	},
+	valuation_rate: function(frm, cdt, cdn) {
+		frm.events.set_amount_quantity(frm, cdt, cdn);
+	}
+
+});
 
 erpnext.stock.StockReconciliation = erpnext.stock.StockController.extend({
 	onload: function() {
@@ -11,42 +143,49 @@ erpnext.stock.StockReconciliation = erpnext.stock.StockController.extend({
 
 	set_default_expense_account: function() {
 		var me = this;
-
-		if (sys_defaults.auto_accounting_for_stock && !this.frm.doc.expense_account) {
-			return this.frm.call({
-				method: "erpnext.accounts.utils.get_company_default",
-				args: {
-					"fieldname": "stock_adjustment_account",
-					"company": this.frm.doc.company
-				},
-				callback: function(r) {
-					if (!r.exc) {
-						me.frm.set_value("expense_account", r.message);
+		if(this.frm.doc.company) {
+			if (erpnext.is_perpetual_inventory_enabled(this.frm.doc.company) && !this.frm.doc.expense_account) {
+				return this.frm.call({
+					method: "erpnext.accounts.utils.get_company_default",
+					args: {
+						"fieldname": "stock_adjustment_account",
+						"company": this.frm.doc.company
+					},
+					callback: function(r) {
+						if (!r.exc) {
+							me.frm.set_value("expense_account", r.message);
+						}
 					}
-				}
-			});
+				});
+			}
 		}
 	},
 
 	setup: function() {
 		var me = this;
-		if (sys_defaults.auto_accounting_for_stock) {
+
+		this.setup_posting_date_time_check();
+
+		if (me.frm.doc.company && erpnext.is_perpetual_inventory_enabled(me.frm.doc.company)) {
 			this.frm.add_fetch("company", "stock_adjustment_account", "expense_account");
 			this.frm.add_fetch("company", "cost_center", "cost_center");
-
-			this.frm.fields_dict["expense_account"].get_query = function() {
+		}
+		this.frm.fields_dict["expense_account"].get_query = function() {
+			if(erpnext.is_perpetual_inventory_enabled(me.frm.doc.company)) {
 				return {
 					"filters": {
 						'company': me.frm.doc.company,
-						'group_or_ledger': 'Ledger'
+						"is_group": 0
 					}
 				}
 			}
-			this.frm.fields_dict["cost_center"].get_query = function() {
+		}
+		this.frm.fields_dict["cost_center"].get_query = function() {
+			if(erpnext.is_perpetual_inventory_enabled(me.frm.doc.company)) {
 				return {
 					"filters": {
 						'company': me.frm.doc.company,
-						'group_or_ledger': 'Ledger'
+						"is_group": 0
 					}
 				}
 			}
@@ -54,108 +193,14 @@ erpnext.stock.StockReconciliation = erpnext.stock.StockController.extend({
 	},
 
 	refresh: function() {
-		if(this.frm.doc.docstatus===0) {
-			this.show_download_template();
-			this.show_upload();
-			if(this.frm.doc.reconciliation_json) {
-				this.frm.set_intro(__("You can submit this Stock Reconciliation."));
-			} else {
-				this.frm.set_intro(__("Download the Template, fill appropriate data and attach the modified file."));
-			}
-		} else if(this.frm.doc.docstatus == 1) {
-			this.frm.set_intro(__("Cancelling this Stock Reconciliation will nullify its effect."));
+		if(this.frm.doc.docstatus==1) {
 			this.show_stock_ledger();
-			this.show_general_ledger();
-		} else {
-			this.frm.set_intro("");
-		}
-		this.show_reconciliation_data();
-		this.show_download_reconciliation_data();
-	},
-
-	show_download_template: function() {
-		var me = this;
-		this.frm.add_custom_button(__("Download Template"), function() {
-			this.title = __("Stock Reconcilation Template");
-			frappe.tools.downloadify([[__("Stock Reconciliation")],
-				["----"],
-				[__("Stock Reconciliation can be used to update the stock on a particular date, usually as per physical inventory.")],
-				[__("When submitted, the system creates difference entries to set the given stock and valuation on this date.")],
-				[__("It can also be used to create opening stock entries and to fix stock value.")],
-				["----"],
-				[__("Notes:")],
-				[__("Item Code and Warehouse should already exist.")],
-				[__("You can update either Quantity or Valuation Rate or both.")],
-				[__("If no change in either Quantity or Valuation Rate, leave the cell blank.")],
-				["----"],
-				["Item Code", "Warehouse", "Quantity", "Valuation Rate"]], null, this);
-			return false;
-		}, "icon-download");
-	},
-
-	show_upload: function() {
-		var me = this;
-		var $wrapper = $(cur_frm.fields_dict.upload_html.wrapper).empty();
-
-		// upload
-		frappe.upload.make({
-			parent: $wrapper,
-			args: {
-				method: 'erpnext.stock.doctype.stock_reconciliation.stock_reconciliation.upload'
-			},
-			sample_url: "e.g. http://example.com/somefile.csv",
-			callback: function(attachment, r) {
-				me.frm.set_value("reconciliation_json", JSON.stringify(r.message));
-				me.show_reconciliation_data();
-				me.frm.save();
+			if (erpnext.is_perpetual_inventory_enabled(this.frm.doc.company)) {
+				this.show_general_ledger();
 			}
-		});
-
-		// rename button
-		$wrapper.find('form input[type="submit"]')
-			.attr('value', 'Upload')
-
-	},
-
-	show_download_reconciliation_data: function() {
-		var me = this;
-		if(this.frm.doc.reconciliation_json) {
-			this.frm.add_custom_button(__("Download Reconcilation Data"), function() {
-				this.title = __("Stock Reconcilation Data");
-				frappe.tools.downloadify(JSON.parse(me.frm.doc.reconciliation_json), null, this);
-				return false;
-			}, "icon-download", "btn-default");
 		}
 	},
 
-	show_reconciliation_data: function() {
-		var $wrapper = $(cur_frm.fields_dict.reconciliation_html.wrapper).empty();
-		if(this.frm.doc.reconciliation_json) {
-			var reconciliation_data = JSON.parse(this.frm.doc.reconciliation_json);
-
-			var _make = function(data, header) {
-				var result = "";
-
-				var _render = header
-					? function(col) { return "<th>" + col + "</th>"; }
-					: function(col) { return "<td>" + col + "</td>"; };
-
-				$.each(data, function(i, row) {
-					result += "<tr>"
-						+ $.map(row, _render).join("")
-						+ "</tr>";
-				});
-				return result;
-			};
-
-			var $reconciliation_table = $("<div style='overflow-x: auto;'>\
-					<table class='table table-striped table-bordered'>\
-					<thead>" + _make([reconciliation_data[0]], true) + "</thead>\
-					<tbody>" + _make(reconciliation_data.splice(1)) + "</tbody>\
-					</table>\
-				</div>").appendTo($wrapper);
-		}
-	},
 });
 
 cur_frm.cscript = new erpnext.stock.StockReconciliation({frm: cur_frm});

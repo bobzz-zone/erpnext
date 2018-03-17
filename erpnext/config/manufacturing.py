@@ -1,21 +1,50 @@
+from __future__ import unicode_literals
 from frappe import _
 
 def get_data():
 	return [
 		{
-			"label": _("Documents"),
-			"icon": "icon-star",
+			"label": _("Production"),
+			"icon": "fa fa-star",
+			"items": [
+				{
+					"type": "doctype",
+					"name": "Production Order",
+					"description": _("Orders released for production."),
+				},
+				{
+					"type": "doctype",
+					"name": "Production Planning Tool",
+					"description": _("Generate Material Requests (MRP) and Production Orders."),
+				},
+				{
+					"type": "doctype",
+					"name": "Stock Entry",
+				},
+				{
+					"type": "doctype",
+					"name": "Timesheet",
+					"description": _("Time Sheet for manufacturing."),
+				},
+
+			]
+		},
+		{
+			"label": _("Bill of Materials"),
 			"items": [
 				{
 					"type": "doctype",
 					"name": "BOM",
 					"description": _("Bill of Materials (BOM)"),
-					"label": _("Bill of Material")
+					"label": _("Bill of Materials")
 				},
 				{
 					"type": "doctype",
-					"name": "Production Order",
-					"description": _("Orders released for production."),
+					"name": "BOM",
+					"icon": "fa fa-sitemap",
+					"label": _("BOM Browser"),
+					"description": _("Tree of Bill of Materials"),
+					"link": "Tree/BOM",
 				},
 				{
 					"type": "doctype",
@@ -25,30 +54,40 @@ def get_data():
 				{
 					"type": "doctype",
 					"name": "Workstation",
-					"description": _("Where manufacturing operations are carried out."),
+					"description": _("Where manufacturing operations are carried."),
+				},
+				{
+					"type": "doctype",
+					"name": "Operation",
+					"description": _("Details of the operations carried out."),
 				},
 
 			]
 		},
 		{
 			"label": _("Tools"),
-			"icon": "icon-wrench",
+			"icon": "fa fa-wrench",
 			"items": [
 				{
 					"type": "doctype",
-					"name": "Production Planning Tool",
-					"description": _("Generate Material Requests (MRP) and Production Orders."),
-				},
-				{
-					"type": "doctype",
-					"name": "BOM Replace Tool",
-					"description": _("Replace Item / BOM in all BOMs"),
+					"name": "BOM Update Tool",
+					"description": _("Replace BOM and update latest price in all BOMs"),
 				},
 			]
 		},
 		{
-			"label": _("Standard Reports"),
-			"icon": "icon-list",
+			"label": _("Setup"),
+			"items": [
+				{
+					"type": "doctype",
+					"name": "Manufacturing Settings",
+					"description": _("Global settings for all manufacturing processes."),
+				}
+			]
+		},
+		{
+			"label": _("Reports"),
+			"icon": "fa fa-list",
 			"items": [
 				{
 					"type": "report",
@@ -73,7 +112,45 @@ def get_data():
 					"is_query_report": True,
 					"name": "Completed Production Orders",
 					"doctype": "Production Order"
+				},{ 
+					"type": "page",
+					"name": "production-analytics",
+					"label": _("Production Analytics"),  
+					"icon": "fa fa-bar-chart",
 				},
+				{
+					"type": "report",
+					"is_query_report": True,
+					"name": "BOM Search",
+					"doctype": "BOM"
+				},
+				{
+					"type": "report",
+					"is_query_report": True,
+					"name": "BOM Stock Report",
+					"doctype": "BOM"
+				}
 			]
 		},
+		{
+			"label": _("Help"),
+			"icon": "fa fa-facetime-video",
+			"items": [
+				{
+					"type": "help",
+					"label": _("Bill of Materials"),
+					"youtube_id": "hDV0c1OeWLo"
+				},
+				{
+					"type": "help",
+					"label": _("Production Planning Tool"),
+					"youtube_id": "CzatSl4zJ2Y"
+				},
+				{
+					"type": "help",
+					"label": _("Production Order"),
+					"youtube_id": "ZotgLyp2YFY"
+				},
+			]
+		}
 	]

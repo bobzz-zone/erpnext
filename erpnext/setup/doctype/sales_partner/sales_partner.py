@@ -1,37 +1,32 @@
-# Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+# Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
 from __future__ import unicode_literals
 import frappe
 from frappe.utils import cstr, filter_strip_join
 from frappe.website.website_generator import WebsiteGenerator
-from erpnext.utilities.address_and_contact import load_address_and_contact
+from frappe.contacts.address_and_contact import load_address_and_contact
 
 class SalesPartner(WebsiteGenerator):
-	page_title_field = "partner_name"
-	condition_field = "show_in_website"
-	template = "templates/generators/sales_partner.html"
+	website = frappe._dict(
+		page_title_field = "partner_name",
+		condition_field = "show_in_website",
+		template = "templates/generators/sales_partner.html"
+	)
+
 	def onload(self):
 		"""Load address and contacts in `__onload`"""
-		load_address_and_contact(self, "sales_partner")
+		load_address_and_contact(self)
 
 	def autoname(self):
 		self.name = self.partner_name
 
 	def validate(self):
-		self.parent_website_route = "partners"
+		if not self.route:
+			self.route = "partners/" + self.scrub(self.partner_name)
 		super(SalesPartner, self).validate()
 		if self.partner_website and not self.partner_website.startswith("http"):
 			self.partner_website = "http://" + self.partner_website
-
-	def get_contacts(self, nm):
-		if nm:
-			return frappe.db.convert_to_lists(frappe.db.sql("""
-				select name, CONCAT(IFNULL(first_name,''),
-					' ',IFNULL(last_name,'')),contact_no,email_id
-				from `tabContact` where sales_partner = %s""", nm))
-		else:
-			return ''
 
 	def get_context(self, context):
 		address = frappe.db.get_value("Address",

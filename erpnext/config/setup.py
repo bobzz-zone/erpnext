@@ -1,11 +1,12 @@
+from __future__ import unicode_literals
 from frappe import _
-from frappe.widgets.moduleview import add_setup_section
+from frappe.desk.moduleview import add_setup_section
 
 def get_data():
 	data = [
 		{
 			"label": _("Settings"),
-			"icon": "icon-wrench",
+			"icon": "fa fa-wrench",
 			"items": [
 				{
 					"type": "doctype",
@@ -17,8 +18,8 @@ def get_data():
 			]
 		},
 		{
-			"label": _("Printing and Branding"),
-			"icon": "icon-print",
+			"label": _("Printing"),
+			"icon": "fa fa-print",
 			"items": [
 				{
 					"type": "doctype",
@@ -43,14 +44,39 @@ def get_data():
 			]
 		},
 		{
-			"label": _("Customize"),
-			"icon": "icon-glass",
+			"label": _("Help"),
 			"items": [
 				{
-					"type": "doctype",
-					"name": "Features Setup",
-					"description": _("Show / Hide features like Serial Nos, POS etc.")
+					"type": "help",
+					"name": _("Data Import and Export"),
+					"youtube_id": "6wiriRKPhmg"
 				},
+				{
+					"type": "help",
+					"label": _("Setting up Email"),
+					"youtube_id": "YFYe0DrB95o"
+				},
+				{
+					"type": "help",
+					"label": _("Printing and Branding"),
+					"youtube_id": "cKZHcx1znMc"
+				},
+				{
+					"type": "help",
+					"label": _("Users and Permissions"),
+					"youtube_id": "fnBoRhBrwR4"
+				},
+				{
+					"type": "help",
+					"label": _("Workflow"),
+					"youtube_id": "yObJUg9FxFs"
+				},
+			]
+		},
+		{
+			"label": _("Customize"),
+			"icon": "fa fa-glass",
+			"items": [
 				{
 					"type": "doctype",
 					"name": "Authorization Rule",
@@ -66,8 +92,14 @@ def get_data():
 		},
 		{
 			"label": _("Email"),
-			"icon": "icon-envelope",
+			"icon": "fa fa-envelope",
 			"items": [
+				{
+					"type": "doctype",
+					"name": "Feedback Trigger",
+					"label": _("Feedback Trigger"),
+					"description": _("Automatically triggers the feedback request based on conditions.")
+				},
 				{
 					"type": "doctype",
 					"name": "Email Digest",
@@ -75,71 +107,20 @@ def get_data():
 				},
 				{
 					"type": "doctype",
-					"name": "Support Email Settings",
-					"description": _("Setup incoming server for support email id. (e.g. support@example.com)")
-				},
-				{
-					"type": "doctype",
-					"name": "Sales Email Settings",
-					"description": _("Setup incoming server for sales email id. (e.g. sales@example.com)")
-				},
-				{
-					"type": "doctype",
-					"name": "Jobs Email Settings",
-					"description": _("Setup incoming server for jobs email id. (e.g. jobs@example.com)")
-				},
-				{
-					"type": "doctype",
 					"name": "SMS Settings",
 					"description": _("Setup SMS gateway settings")
 				},
 			]
-		},
-		{
-			"label": _("Masters"),
-			"icon": "icon-star",
-			"items": [
-				{
-					"type": "doctype",
-					"name": "Company",
-					"description": _("Company (not Customer or Supplier) master.")
-				},
-				{
-					"type": "doctype",
-					"name": "Item",
-					"description": _("Item master.")
-				},
-				{
-					"type": "doctype",
-					"name": "Customer",
-					"description": _("Customer master.")
-				},
-				{
-					"type": "doctype",
-					"name": "Supplier",
-					"description": _("Supplier master.")
-				},
-				{
-					"type": "doctype",
-					"name": "Contact",
-					"description": _("Contact master.")
-				},
-				{
-					"type": "doctype",
-					"name": "Address",
-					"description": _("Address master.")
-				},
-			]
-		},
+		}
 	]
 
 	for module, label, icon in (
-		("accounts", _("Accounts"), "icon-money"),
-		("stock", _("Stock"), "icon-truck"),
-		("selling", _("Selling"), "icon-tag"),
-		("buying", _("Buying"), "icon-shopping-cart"),
-		("hr", _("Human Resources"), "icon-group"),
-		("support", _("Support"), "icon-phone")):
+		("accounts", _("Accounts"), "fa fa-money"),
+		("stock", _("Stock"), "fa fa-truck"),
+		("selling", _("Selling"), "fa fa-tag"),
+		("buying", _("Buying"), "fa fa-shopping-cart"),
+		("hr", _("Human Resources"), "fa fa-group"),
+		("support", _("Support"), "fa fa-phone")):
 
 		add_setup_section(data, "erpnext", module, label, icon)
 

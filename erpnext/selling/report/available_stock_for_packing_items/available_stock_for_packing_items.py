@@ -1,4 +1,4 @@
-# Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+# Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
 from __future__ import unicode_literals
@@ -39,10 +39,11 @@ def get_columns():
 
 	return columns
 
-def get_sales_bom_items():
+def get_product_bundle_items():
 	sbom_item_map = {}
-	for sbom in frappe.db.sql("""select parent, item_code, qty from `tabSales BOM Item` 
-		where docstatus < 2""", as_dict=1):
+	for sbom in frappe.db.sql("""select pb.new_item_code as parent, pbi.item_code, pbi.qty 
+			from `tabProduct Bundle Item` as pbi, `tabProduct Bundle` as pb
+		where pb.docstatus < 2 and pb.name = pbi.parent""", as_dict=1):
 			sbom_item_map.setdefault(sbom.parent, {}).setdefault(sbom.item_code, sbom.qty)
 			
 	return sbom_item_map
@@ -67,7 +68,7 @@ def get_item_warehouse_quantity():
 def get_item_warehouse_quantity_map():
 	sbom_map = {}
 	iwq_map = get_item_warehouse_quantity()
-	sbom_item_map = get_sales_bom_items()
+	sbom_item_map = get_product_bundle_items()
 	
 	for sbom, sbom_items in sbom_item_map.items():
 		for item, child_qty in sbom_items.items():

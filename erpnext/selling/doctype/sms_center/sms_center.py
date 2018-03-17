@@ -1,4 +1,4 @@
-# Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+# Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
 from __future__ import unicode_literals
@@ -9,7 +9,7 @@ from frappe import msgprint, _
 
 from frappe.model.document import Document
 
-from erpnext.setup.doctype.sms_settings.sms_settings import send_sms
+from frappe.core.doctype.sms_settings.sms_settings import send_sms
 
 class SMSCenter(Document):
 	def create_receiver_list(self):
@@ -44,8 +44,10 @@ class SMSCenter(Document):
 				ifnull(cell_number,'')!='' %s""" % where_clause)
 
 		elif self.send_to == 'All Sales Person':
-			rec = frappe.db.sql("""select sales_person_name, mobile_no from
-				`tabSales Person` where docstatus!=2 and ifnull(mobile_no,'')!=''""")
+			rec = frappe.db.sql("""select sales_person_name,
+				tabEmployee.cell_number from `tabSales Person` left join tabEmployee
+				on `tabSales Person`.employee = tabEmployee.name
+				where ifnull(tabEmployee.cell_number,'')!=''""")
 
 		rec_list = ''
 

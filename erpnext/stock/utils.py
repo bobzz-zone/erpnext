@@ -1,33 +1,96 @@
-# Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+# Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
-import frappe
+from __future__ import unicode_literals
+import frappe, erpnext
 from frappe import _
 import json
-from frappe.utils import flt, cstr, nowdate, add_days, cint
-from frappe.utils.email_lib import sendmail
-from erpnext.accounts.utils import get_fiscal_year, FiscalYearError
+from frappe.utils import flt, cstr, nowdate, nowtime
+
+from six import string_types
 
 class InvalidWarehouseCompany(frappe.ValidationError): pass
 
-def get_stock_balance_on(warehouse, posting_date=None):
+def get_stock_value_on(warehouse=None, posting_date=None, item_code=None):
 	if not posting_date: posting_date = nowdate()
 
+	values, condition = [posting_date], ""
+
+	if warehouse:
+		
+		lft, rgt, is_group = frappe.db.get_value("Warehouse", warehouse, ["lft", "rgt", "is_group"])
+		
+		if is_group:
+			values.extend([lft, rgt])
+			condition += "and exists (\
+				select name from `tabWarehouse` wh where wh.name = sle.warehouse\
+				and wh.lft >= %s and wh.rgt <= %s)"
+		
+		else:
+			values.append(warehouse)
+			condition += " AND warehouse = %s"
+
+	if item_code:
+		values.append(item_code)
+		condition.append(" AND item_code = %s")
+
 	stock_ledger_entries = frappe.db.sql("""
-		SELECT
-			item_code, stock_value
-		FROM
-			`tabStock Ledger Entry`
-		WHERE
-			warehouse=%s AND posting_date <= %s
+		SELECT item_code, stock_value, name, warehouse
+		FROM `tabStock Ledger Entry` sle
+		WHERE posting_date <= %s {0}
 		ORDER BY timestamp(posting_date, posting_time) DESC, name DESC
-	""", (warehouse, posting_date), as_dict=1)
+	""".format(condition), values, as_dict=1)
 
 	sle_map = {}
 	for sle in stock_ledger_entries:
-		sle_map.setdefault(sle.item_code, flt(sle.stock_value))
-
+		if not sle_map.has_key((sle.item_code, sle.warehouse)):
+			sle_map[(sle.item_code, sle.warehouse)] = flt(sle.stock_value)
+		
 	return sum(sle_map.values())
+
+@frappe.whitelist()
+def get_stock_balance(item_code, warehouse, posting_date=None, posting_time=None, with_valuation_rate=False):
+	"""Returns stock balance quantity at given warehouse on given posting date or current date.
+
+	If `with_valuation_rate` is True, will return tuple (qty, rate)"""
+
+	from erpnext.stock.stock_ledger import get_previous_sle
+
+	if not posting_date: posting_date = nowdate()
+	if not posting_time: posting_time = nowtime()
+
+	last_entry = get_previous_sle({
+		"item_code": item_code,
+		"warehouse":warehouse,
+		"posting_date": posting_date,
+		"posting_time": posting_time })
+
+	if with_valuation_rate:
+		return (last_entry.qty_after_transaction, last_entry.valuation_rate) if last_entry else (0.0, 0.0)
+	else:
+		return last_entry.qty_after_transaction if last_entry else 0.0
+
+@frappe.whitelist()
+def get_latest_stock_qty(item_code, warehouse=None):
+	values, condition = [item_code], ""
+	if warehouse:
+		lft, rgt, is_group = frappe.db.get_value("Warehouse", warehouse, ["lft", "rgt", "is_group"])
+	
+		if is_group:
+			values.extend([lft, rgt])
+			condition += "and exists (\
+				select name from `tabWarehouse` wh where wh.name = tabBin.warehouse\
+				and wh.lft >= %s and wh.rgt <= %s)"
+	
+		else:
+			values.append(warehouse)
+			condition += " AND warehouse = %s"
+	
+	actual_qty = frappe.db.sql("""select sum(actual_qty) from tabBin
+		where item_code=%s {0}""".format(condition), values)[0][0]
+
+	return actual_qty
+
 
 def get_latest_stock_balance():
 	bin_map = {}
@@ -45,25 +108,28 @@ def get_bin(item_code, warehouse):
 			"item_code": item_code,
 			"warehouse": warehouse,
 		})
-		bin_obj.ignore_permissions = 1
+		bin_obj.flags.ignore_permissions = 1
 		bin_obj.insert()
 	else:
 		bin_obj = frappe.get_doc('Bin', bin)
-	bin_obj.ignore_permissions = True
+	bin_obj.flags.ignore_permissions = True
 	return bin_obj
 
-def update_bin(args, allow_negative_stock=False):
+def update_bin(args, allow_negative_stock=False, via_landed_cost_voucher=False):
 	is_stock_item = frappe.db.get_value('Item', args.get("item_code"), 'is_stock_item')
-	if is_stock_item == 'Yes':
+	if is_stock_item:
 		bin = get_bin(args.get("item_code"), args.get("warehouse"))
-		bin.update_stock(args, allow_negative_stock)
+		bin.update_stock(args, allow_negative_stock, via_landed_cost_voucher)
 		return bin
 	else:
 		frappe.msgprint(_("Item {0} ignored since it is not a stock item").format(args.get("item_code")))
 
-def get_incoming_rate(args):
+@frappe.whitelist()
+def get_incoming_rate(args, raise_error_if_no_rate=True):
 	"""Get Incoming Rate based on valuation method"""
-	from erpnext.stock.stock_ledger import get_previous_sle
+	from erpnext.stock.stock_ledger import get_previous_sle, get_valuation_rate
+	if isinstance(args, string_types):
+		args = json.loads(args)
 
 	in_rate = 0
 	if (args.get("serial_no") or "").strip():
@@ -72,12 +138,18 @@ def get_incoming_rate(args):
 		valuation_method = get_valuation_method(args.get("item_code"))
 		previous_sle = get_previous_sle(args)
 		if valuation_method == 'FIFO':
-			if not previous_sle:
-				return 0.0
-			previous_stock_queue = json.loads(previous_sle.get('stock_queue', '[]') or '[]')
-			in_rate = get_fifo_rate(previous_stock_queue, args.get("qty") or 0) if previous_stock_queue else 0
+			if previous_sle:
+				previous_stock_queue = json.loads(previous_sle.get('stock_queue', '[]') or '[]')
+				in_rate = get_fifo_rate(previous_stock_queue, args.get("qty") or 0) if previous_stock_queue else 0
 		elif valuation_method == 'Moving Average':
 			in_rate = previous_sle.get('valuation_rate') or 0
+
+	if not in_rate:
+		voucher_no = args.get('voucher_no') or args.get('name')
+		in_rate = get_valuation_rate(args.get('item_code'), args.get('warehouse'),
+			args.get('voucher_type'), voucher_no, args.get('allow_zero_valuation'),
+			currency=erpnext.get_company_currency(args.get('company')), company=args.get('company'),
+			raise_error_if_no_rate=True)
 
 	return in_rate
 
@@ -85,7 +157,7 @@ def get_avg_purchase_rate(serial_nos):
 	"""get average value of serial numbers"""
 
 	serial_nos = get_valid_serial_nos(serial_nos)
-	return flt(frappe.db.sql("""select avg(ifnull(purchase_rate, 0)) from `tabSerial No`
+	return flt(frappe.db.sql("""select avg(purchase_rate) from `tabSerial No`
 		where name in (%s)""" % ", ".join(["%s"] * len(serial_nos)),
 		tuple(serial_nos))[0][0])
 
@@ -147,210 +219,7 @@ def validate_warehouse_company(warehouse, company):
 		frappe.throw(_("Warehouse {0} does not belong to company {1}").format(warehouse, company),
 			InvalidWarehouseCompany)
 
-def get_sales_bom_buying_amount(item_code, warehouse, voucher_type, voucher_no, voucher_detail_no,
-		stock_ledger_entries, item_sales_bom):
-	# sales bom item
-	buying_amount = 0.0
-	for bom_item in item_sales_bom[item_code]:
-		if bom_item.get("parent_detail_docname")==voucher_detail_no:
-			buying_amount += get_buying_amount(voucher_type, voucher_no, voucher_detail_no,
-				stock_ledger_entries.get((bom_item.item_code, warehouse), []))
-
-	return buying_amount
-
-def get_buying_amount(voucher_type, voucher_no, item_row, stock_ledger_entries):
-	# IMP NOTE
-	# stock_ledger_entries should already be filtered by item_code and warehouse and
-	# sorted by posting_date desc, posting_time desc
-	for i, sle in enumerate(stock_ledger_entries):
-		if sle.voucher_type == voucher_type and sle.voucher_no == voucher_no and \
-			sle.voucher_detail_no == item_row:
-				previous_stock_value = len(stock_ledger_entries) > i+1 and \
-					flt(stock_ledger_entries[i+1].stock_value) or 0.0
-				buying_amount =  previous_stock_value - flt(sle.stock_value)
-
-				return buying_amount
-	return 0.0
-
-
-def reorder_item():
-	""" Reorder item if stock reaches reorder level"""
-	# if initial setup not completed, return
-	if not frappe.db.sql("select name from `tabFiscal Year` limit 1"):
-		return
-
-	if getattr(frappe.local, "auto_indent", None) is None:
-		frappe.local.auto_indent = cint(frappe.db.get_value('Stock Settings', None, 'auto_indent'))
-
-	if frappe.local.auto_indent:
-		_reorder_item()
-
-def _reorder_item():
-	# {"Purchase": {"Company": [{"item_code": "", "warehouse": "", "reorder_qty": 0.0}]}, "Transfer": {...}}
-	material_requests = {"Purchase": {}, "Transfer": {}}
-
-	item_warehouse_projected_qty = get_item_warehouse_projected_qty()
-	warehouse_company = frappe._dict(frappe.db.sql("""select name, company from `tabWarehouse`"""))
-	default_company = (frappe.defaults.get_defaults().get("company") or
-		frappe.db.sql("""select name from tabCompany limit 1""")[0][0])
-
-	def add_to_material_request(item_code, warehouse, reorder_level, reorder_qty, material_request_type):
-		if warehouse not in item_warehouse_projected_qty[item_code]:
-			# likely a disabled warehouse or a warehouse where BIN does not exist
-			return
-
-		reorder_level = flt(reorder_level)
-		reorder_qty = flt(reorder_qty)
-		projected_qty = item_warehouse_projected_qty[item_code][warehouse]
-
-		if reorder_level and projected_qty < reorder_level:
-			deficiency = reorder_level - projected_qty
-			if deficiency > reorder_qty:
-				reorder_qty = deficiency
-
-			company = warehouse_company.get(warehouse) or default_company
-
-			material_requests[material_request_type].setdefault(company, []).append({
-				"item_code": item_code,
-				"warehouse": warehouse,
-				"reorder_qty": reorder_qty
-			})
-
-	for item_code in item_warehouse_projected_qty:
-		item = frappe.get_doc("Item", item_code)
-		if item.get("item_reorder"):
-			for d in item.get("item_reorder"):
-				add_to_material_request(item_code, d.warehouse, d.warehouse_reorder_level,
-					d.warehouse_reorder_qty, d.material_request_type)
-
-		else:
-			# raise for default warehouse
-			add_to_material_request(item_code, item.default_warehouse, item.re_order_level, item.re_order_qty, "Purchase")
-
-	if material_requests:
-		create_material_request(material_requests)
-
-def get_item_warehouse_projected_qty():
-	item_warehouse_projected_qty = {}
-
-	for item_code, warehouse, projected_qty in frappe.db.sql("""select item_code, warehouse, projected_qty
-		from tabBin where ifnull(item_code, '') != '' and ifnull(warehouse, '') != ''
-		and exists (select name from `tabItem`
-			where `tabItem`.name = `tabBin`.item_code and
-			is_stock_item='Yes' and (is_purchase_item='Yes' or is_sub_contracted_item='Yes') and
-			(ifnull(end_of_life, '0000-00-00')='0000-00-00' or end_of_life > %s))
-		and exists (select name from `tabWarehouse`
-			where `tabWarehouse`.name = `tabBin`.warehouse
-			and ifnull(disabled, 0)=0)""", nowdate()):
-
-		item_warehouse_projected_qty.setdefault(item_code, {})[warehouse] = flt(projected_qty)
-
-	return item_warehouse_projected_qty
-
-def create_material_request(material_requests):
-	"""	Create indent on reaching reorder level	"""
-	mr_list = []
-	defaults = frappe.defaults.get_defaults()
-	exceptions_list = []
-
-	def _log_exception():
-		if frappe.local.message_log:
-			exceptions_list.extend(frappe.local.message_log)
-			frappe.local.message_log = []
-		else:
-			exceptions_list.append(frappe.get_traceback())
-
-	try:
-		current_fiscal_year = get_fiscal_year(nowdate())[0] or defaults.fiscal_year
-
-	except FiscalYearError:
-		_log_exception()
-		notify_errors(exceptions_list)
-		return
-
-	for request_type in material_requests:
-		for company in material_requests[request_type]:
-			try:
-				items = material_requests[request_type][company]
-				if not items:
-					continue
-
-				mr = frappe.new_doc("Material Request")
-				mr.update({
-					"company": company,
-					"fiscal_year": current_fiscal_year,
-					"transaction_date": nowdate(),
-					"material_request_type": request_type
-				})
-
-				for d in items:
-					d = frappe._dict(d)
-					item = frappe.get_doc("Item", d.item_code)
-					mr.append("indent_details", {
-						"doctype": "Material Request Item",
-						"item_code": d.item_code,
-						"schedule_date": add_days(nowdate(),cint(item.lead_time_days)),
-						"uom":	item.stock_uom,
-						"warehouse": d.warehouse,
-						"item_name": item.item_name,
-						"description": item.description,
-						"item_group": item.item_group,
-						"qty": d.reorder_qty,
-						"brand": item.brand,
-					})
-
-				mr.insert()
-				mr.submit()
-				mr_list.append(mr)
-
-			except:
-				_log_exception()
-
-	if mr_list:
-		if getattr(frappe.local, "reorder_email_notify", None) is None:
-			frappe.local.reorder_email_notify = cint(frappe.db.get_value('Stock Settings', None,
-				'reorder_email_notify'))
-
-		if(frappe.local.reorder_email_notify):
-			send_email_notification(mr_list)
-
-	if exceptions_list:
-		notify_errors(exceptions_list)
-
-def send_email_notification(mr_list):
-	""" Notify user about auto creation of indent"""
-
-	email_list = frappe.db.sql_list("""select distinct r.parent
-		from tabUserRole r, tabUser p
-		where p.name = r.parent and p.enabled = 1 and p.docstatus < 2
-		and r.role in ('Purchase Manager','Material Manager')
-		and p.name not in ('Administrator', 'All', 'Guest')""")
-
-	msg="""<h3>Following Material Requests has been raised automatically \
-		based on item reorder level:</h3>"""
-	for mr in mr_list:
-		msg += "<p><b><u>" + mr.name + """</u></b></p><table class='table table-bordered'><tr>
-			<th>Item Code</th><th>Warehouse</th><th>Qty</th><th>UOM</th></tr>"""
-		for item in mr.get("indent_details"):
-			msg += "<tr><td>" + item.item_code + "</td><td>" + item.warehouse + "</td><td>" + \
-				cstr(item.qty) + "</td><td>" + cstr(item.uom) + "</td></tr>"
-		msg += "</table>"
-	sendmail(email_list, subject='Auto Material Request Generation Notification', msg = msg)
-
-def notify_errors(exceptions_list):
-	subject = "[Important] [ERPNext] Error(s) while creating Material Requests based on Re-order Levels"
-	msg = """Dear System Manager,
-
-An error occured for certain Items while creating Material Requests based on Re-order level.
-
-Please rectify these issues:
----
-<pre>
-%s
-</pre>
----
-Regards,
-Administrator""" % ("\n\n".join(exceptions_list),)
-
-	from frappe.utils.user import get_system_managers
-	sendmail(get_system_managers(), subject=subject, msg=msg)
+def is_group_warehouse(warehouse):
+	if frappe.db.get_value("Warehouse", warehouse, "is_group"):
+		frappe.throw(_("Group node warehouse is not allowed to select for transactions"))
+	

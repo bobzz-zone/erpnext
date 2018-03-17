@@ -1,4 +1,4 @@
-// Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+// Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 // License: GNU General Public License v3. See license.txt
 
 frappe.query_reports["Accounts Payable"] = {
@@ -8,37 +8,56 @@ frappe.query_reports["Accounts Payable"] = {
 			"label": __("Company"),
 			"fieldtype": "Link",
 			"options": "Company",
-			"default": frappe.defaults.get_user_default("company")
+			"default": frappe.defaults.get_user_default("Company")
 		},
 		{
-			"fieldname":"account",
-			"label": __("Account"),
+			"fieldname":"supplier",
+			"label": __("Supplier"),
 			"fieldtype": "Link",
-			"options": "Account",
-			"get_query": function() {
-				var company = frappe.query_report.filters_by_name.company.get_value();
-				return {
-					"query": "erpnext.controllers.queries.get_account_list",
-					"filters": {
-						"report_type": "Balance Sheet",
-						"company": company,
-						"master_type": "Supplier"
-					}
-				}
-			}
+			"options": "Supplier"
 		},
 		{
 			"fieldname":"report_date",
-			"label": __("Date"),
+			"label": __("As on Date"),
 			"fieldtype": "Date",
-			"default": get_today()
+			"default": frappe.datetime.get_today()
 		},
 		{
 			"fieldname":"ageing_based_on",
 			"label": __("Ageing Based On"),
 			"fieldtype": "Select",
-			"options": 'Posting Date' + NEWLINE + 'Due Date',
+			"options": 'Posting Date\nDue Date',
 			"default": "Posting Date"
+		},
+		{
+			"fieldtype": "Break",
+		},
+		{
+			"fieldname":"range1",
+			"label": __("Ageing Range 1"),
+			"fieldtype": "Int",
+			"default": "30",
+			"reqd": 1
+		},
+		{
+			"fieldname":"range2",
+			"label": __("Ageing Range 2"),
+			"fieldtype": "Int",
+			"default": "60",
+			"reqd": 1
+		},
+		{
+			"fieldname":"range3",
+			"label": __("Ageing Range 3"),
+			"fieldtype": "Int",
+			"default": "90",
+			"reqd": 1
 		}
-	]
+	],
+	onload: function(report) {
+		report.page.add_inner_button(__("Accounts Payable Summary"), function() {
+			var filters = report.get_values();
+			frappe.set_route('query-report', 'Accounts Payable Summary', {company: filters.company});
+		});
+	}
 }

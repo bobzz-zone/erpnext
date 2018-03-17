@@ -1,46 +1,271 @@
-// Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+// Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 // License: GNU General Public License v3. See license.txt
 
 frappe.provide("erpnext.buying");
 
-cur_frm.cscript.tname = "Purchase Order Item";
-cur_frm.cscript.fname = "po_details";
-cur_frm.cscript.other_fname = "other_charges";
+{% include 'erpnext/public/js/controllers/buying.js' %};
 
-{% include 'buying/doctype/purchase_common/purchase_common.js' %};
-{% include 'accounts/doctype/purchase_taxes_and_charges_master/purchase_taxes_and_charges_master.js' %}
-{% include 'accounts/doctype/sales_invoice/pos.js' %}
+frappe.ui.form.on("Purchase Order", {
+	setup: function(frm) {
+		frm.custom_make_buttons = {
+			'Purchase Receipt': 'Receipt',
+			'Purchase Invoice': 'Invoice',
+			'Stock Entry': 'Material to Supplier'
+		}
+
+		frm.set_query("reserve_warehouse", "supplied_items", function() {
+			return {
+				filters: {
+					"company": frm.doc.company,
+					"is_group": 0
+				}
+			}
+		});
+
+		frm.set_indicator_formatter('item_code',
+			function(doc) { return (doc.qty<=doc.received_qty) ? "green" : "orange" })
+	},
+
+	onload: function(frm) {
+		set_schedule_date(frm);
+
+		erpnext.queries.setup_queries(frm, "Warehouse", function() {
+			return erpnext.queries.warehouse(frm.doc);
+		});
+
+		if (frm.doc.__onload) {
+			frm.toggle_display('get_last_purchase_rate',
+				frm.doc.__onload.disable_fetch_last_purchase_rate);
+		}
+	},
+});
+
+frappe.ui.form.on("Purchase Order Item", {
+	schedule_date: function(frm, cdt, cdn) {
+		var row = locals[cdt][cdn];
+		if (row.schedule_date) {
+			if(!frm.doc.schedule_date) {
+				erpnext.utils.copy_value_in_all_row(frm.doc, cdt, cdn, "items", "schedule_date");
+			} else {
+				set_schedule_date(frm);
+			}
+		}
+	}
+});
 
 erpnext.buying.PurchaseOrderController = erpnext.buying.BuyingController.extend({
 	refresh: function(doc, cdt, cdn) {
+		var me = this;
 		this._super();
-		this.frm.dashboard.reset();
+		var allow_receipt = false;
+		var is_drop_ship = false;
 
-		if(doc.docstatus == 1 && doc.status != 'Stopped'){
-			cur_frm.dashboard.add_progress(cint(doc.per_received) + __("% Received"),
-				doc.per_received);
-			cur_frm.dashboard.add_progress(cint(doc.per_billed) + __("% Billed"),
-				doc.per_billed);
+		for (var i in cur_frm.doc.items) {
+			var item = cur_frm.doc.items[i];
+			if(item.delivered_by_supplier !== 1) {
+				allow_receipt = true;
+			} else {
+				is_drop_ship = true;
+			}
 
-			if(flt(doc.per_received, 2) < 100)
-				cur_frm.add_custom_button(__('Make Purchase Receipt'),
-					this.make_purchase_receipt, frappe.boot.doctype_icons["Purchase Receipt"]);
-			if(flt(doc.per_billed, 2) < 100)
-				cur_frm.add_custom_button(__('Make Invoice'), this.make_purchase_invoice,
-					frappe.boot.doctype_icons["Purchase Invoice"]);
-			if(flt(doc.per_billed, 2) < 100 || doc.per_received < 100)
-				cur_frm.add_custom_button(__('Stop'), cur_frm.cscript['Stop Purchase Order'],
-					"icon-exclamation", "btn-default");
+			if(is_drop_ship && allow_receipt) {
+				break;
+			}
+		}
 
-			cur_frm.add_custom_button('Send SMS', cur_frm.cscript.send_sms, "icon-mobile-phone", true);
+		cur_frm.set_df_property("drop_ship", "hidden", !is_drop_ship);
 
+		if(doc.docstatus == 1 && !in_list(["Closed", "Delivered"], doc.status)) {
+			if (this.frm.has_perm("submit")) {
+				if(flt(doc.per_billed, 2) < 100 || doc.per_received < 100) {
+					cur_frm.add_custom_button(__('Close'), this.close_purchase_order, __("Status"));
+				}
+			}
+
+			if(is_drop_ship && doc.status!="Delivered"){
+				cur_frm.add_custom_button(__('Delivered'),
+					this.delivered_by_supplier, __("Status"));
+
+				cur_frm.page.set_inner_btn_group_as_primary(__("Status"));
+			}
 		} else if(doc.docstatus===0) {
 			cur_frm.cscript.add_from_mappers();
 		}
 
-		if(doc.docstatus == 1 && doc.status == 'Stopped')
-			cur_frm.add_custom_button(__('Unstop Purchase Order'),
-				cur_frm.cscript['Unstop Purchase Order'], "icon-check");
+		if(doc.docstatus == 1 && in_list(["Closed", "Delivered"], doc.status)) {
+			if (this.frm.has_perm("submit")) {
+				cur_frm.add_custom_button(__('Re-open'), this.unclose_purchase_order, __("Status"));
+			}
+		}
+
+		if(doc.docstatus == 1 && doc.status != "Closed") {
+			if(flt(doc.per_received, 2) < 100 && allow_receipt) {
+				cur_frm.add_custom_button(__('Receipt'), this.make_purchase_receipt, __("Make"));
+
+				if(doc.is_subcontracted==="Yes") {
+					cur_frm.add_custom_button(__('Material to Supplier'),
+						function() { me.make_stock_entry(); }, __("Transfer"));
+				}
+			}
+
+			if(flt(doc.per_billed, 2) < 100)
+				cur_frm.add_custom_button(__('Invoice'),
+					this.make_purchase_invoice, __("Make"));
+
+			if(flt(doc.per_billed)==0 && doc.status != "Delivered") {
+				cur_frm.add_custom_button(__('Payment'), cur_frm.cscript.make_payment_entry, __("Make"));
+			}
+
+			if(!doc.subscription) {
+				cur_frm.add_custom_button(__('Subscription'), function() {
+					erpnext.utils.make_subscription(doc.doctype, doc.name)
+				}, __("Make"))
+			}
+			cur_frm.page.set_inner_btn_group_as_primary(__("Make"));
+		}
+	},
+
+	get_items_from_open_material_requests: function() {
+		erpnext.utils.map_current_doc({
+			method: "erpnext.stock.doctype.material_request.material_request.make_purchase_order_based_on_supplier",
+			source_name: this.frm.doc.supplier,
+			get_query_filters: {
+				docstatus: ["!=", 2],
+			}
+		});
+	},
+
+	validate: function() {
+		set_schedule_date(this.frm);
+	},
+
+	make_stock_entry: function() {
+		var items = $.map(cur_frm.doc.items, function(d) { return d.bom ? d.item_code : false; });
+		var me = this;
+
+		if(items.length >= 1){
+			me.raw_material_data = [];
+			me.show_dialog = 1;
+			let title = "";
+			let fields = [
+			{fieldtype:'Section Break', label: __('Raw Materials')},
+			{fieldname: 'sub_con_rm_items', fieldtype: 'Table',
+				fields: [
+					{
+						fieldtype:'Data',
+						fieldname:'item_code',
+						label: __('Item'),
+						read_only:1,
+						in_list_view:1
+					},
+					{
+						fieldtype:'Data',
+						fieldname:'rm_item_code',
+						label: __('Raw Material'),
+						read_only:1,
+						in_list_view:1
+					},
+					{
+						fieldtype:'Float',
+						read_only:1,
+						fieldname:'qty',
+						label: __('Quantity'),
+						read_only:1,
+						in_list_view:1
+					},
+					{
+						fieldtype:'Data',
+						read_only:1,
+						fieldname:'warehouse',
+						label: __('Reserve Warehouse'),
+						in_list_view:1
+					},
+					{
+						fieldtype:'Float',
+						read_only:1,
+						fieldname:'rate',
+						label: __('Rate'),
+						hidden:1
+					},
+					{
+						fieldtype:'Float',
+						read_only:1,
+						fieldname:'amount',
+						label: __('Amount'),
+						hidden:1
+					},
+					{
+						fieldtype:'Link',
+						read_only:1,
+						fieldname:'uom',
+						label: __('UOM'),
+						hidden:1
+					}
+				],
+				data: me.raw_material_data,
+				get_data: function() {
+					return me.raw_material_data;
+				}
+			}
+		]
+
+		me.dialog = new frappe.ui.Dialog({
+			title: title,fields: fields
+			});
+
+		if (me.frm.doc['supplied_items']) {
+			me.frm.doc['supplied_items'].forEach((item, index) => {
+			if (item.rm_item_code && item.main_item_code) {
+					me.raw_material_data.push ({
+						'name':index,
+						'item_code': item.main_item_code,
+						'rm_item_code': item.rm_item_code,
+						'item_name': item.rm_item_code,
+						'qty': item.required_qty,
+						'warehouse':item.reserve_warehouse,
+						'rate':item.rate,
+						'amount':item.amount,
+						'stock_uom':item.stock_uom
+					});
+					me.dialog.fields_dict.sub_con_rm_items.grid.refresh();
+				}
+			})
+		}
+
+		me.dialog.show()
+		this.dialog.set_primary_action(__('Transfer'), function() {
+			me.values = me.dialog.get_values();
+			if(me.values) {
+				me.values.sub_con_rm_items.map((row,i) => {
+					if (!row.item_code || !row.rm_item_code || !row.warehouse || !row.qty || row.qty === 0) {
+						frappe.throw(__("Item Code, warehouse, quantity are required on row" + (i+1)));
+					}
+				})
+				me._make_rm_stock_entry(me.dialog.fields_dict.sub_con_rm_items.grid.get_selected_children())
+				me.dialog.hide()
+				}
+			});
+		}
+
+		me.dialog.get_close_btn().on('click', () => {
+			me.dialog.hide();
+		});
+
+	},
+
+	_make_rm_stock_entry: function(rm_items) {
+		frappe.call({
+			method:"erpnext.buying.doctype.purchase_order.purchase_order.make_rm_stock_entry",
+			args: {
+				purchase_order: cur_frm.doc.name,
+				rm_items: rm_items
+			}
+			,
+			callback: function(r) {
+				var doclist = frappe.model.sync(r.message);
+				frappe.set_route("Form", doclist[0].doctype, doclist[0].name);
+			}
+		});
 	},
 
 	make_purchase_receipt: function() {
@@ -58,71 +283,104 @@ erpnext.buying.PurchaseOrderController = erpnext.buying.BuyingController.extend(
 	},
 
 	add_from_mappers: function() {
-		cur_frm.add_custom_button(__('From Material Request'),
+		var me = this;
+		this.frm.add_custom_button(__('Material Request'),
 			function() {
-				frappe.model.map_current_doc({
+				erpnext.utils.map_current_doc({
 					method: "erpnext.stock.doctype.material_request.material_request.make_purchase_order",
 					source_doctype: "Material Request",
+					target: me.frm,
+					setters: {
+						company: me.frm.doc.company
+					},
 					get_query_filters: {
 						material_request_type: "Purchase",
 						docstatus: 1,
 						status: ["!=", "Stopped"],
 						per_ordered: ["<", 99.99],
-						company: cur_frm.doc.company
 					}
 				})
-			}, "icon-download", "btn-default"
-		);
+			}, __("Add items from"));
 
-		cur_frm.add_custom_button(__('From Supplier Quotation'),
+		this.frm.add_custom_button(__('Supplier Quotation'),
 			function() {
-				frappe.model.map_current_doc({
+				erpnext.utils.map_current_doc({
 					method: "erpnext.buying.doctype.supplier_quotation.supplier_quotation.make_purchase_order",
 					source_doctype: "Supplier Quotation",
+					target: me.frm,
+					setters: {
+						company: me.frm.doc.company
+					},
 					get_query_filters: {
 						docstatus: 1,
 						status: ["!=", "Stopped"],
-						company: cur_frm.doc.company
 					}
 				})
-			}, "icon-download", "btn-default"
-		);
+			}, __("Add items from"));
 
-		cur_frm.add_custom_button(__('For Supplier'),
-			function() {
-				frappe.model.map_current_doc({
-					method: "erpnext.stock.doctype.material_request.material_request.make_purchase_order_based_on_supplier",
-					source_doctype: "Supplier",
-					get_query_filters: {
-						docstatus: ["!=", 2],
-					}
-				})
-			}, "icon-download", "btn-default"
-		);
 	},
 
 	tc_name: function() {
 		this.get_terms();
 	},
 
+	items_add: function(doc, cdt, cdn) {
+		var row = frappe.get_doc(cdt, cdn);
+		if(doc.schedule_date) {
+			row.schedule_date = doc.schedule_date;
+			refresh_field("schedule_date", cdn, "items");
+		} else {
+			this.frm.script_manager.copy_from_first_row("items", row, ["schedule_date"]);
+		}
+	},
+
+	unclose_purchase_order: function(){
+		cur_frm.cscript.update_status('Re-open', 'Submitted')
+	},
+
+	close_purchase_order: function(){
+		cur_frm.cscript.update_status('Close', 'Closed')
+	},
+
+	delivered_by_supplier: function(){
+		cur_frm.cscript.update_status('Deliver', 'Delivered')
+	},
+
+	get_last_purchase_rate: function() {
+		frappe.call({
+			"method": "get_last_purchase_rate",
+			"doc": cur_frm.doc,
+			callback: function(r, rt) {
+				cur_frm.dirty();
+				cur_frm.cscript.calculate_taxes_and_totals();
+			}
+		})
+	},
+
+	items_on_form_rendered: function() {
+		set_schedule_date(this.frm);
+	},
+
+	schedule_date: function() {
+		set_schedule_date(this.frm);
+	}
 });
 
 // for backward compatibility: combine new and previous states
 $.extend(cur_frm.cscript, new erpnext.buying.PurchaseOrderController({frm: cur_frm}));
 
-cur_frm.fields_dict['supplier_address'].get_query = function(doc, cdt, cdn) {
-	return {
-		filters: {'supplier': doc.supplier}
-	}
+cur_frm.cscript.update_status= function(label, status){
+	frappe.call({
+		method: "erpnext.buying.doctype.purchase_order.purchase_order.update_status",
+		args: {status: status, name: cur_frm.doc.name},
+		callback: function(r) {
+			cur_frm.set_value("status", status);
+			cur_frm.reload_doc();
+		}
+	})
 }
 
-cur_frm.fields_dict['contact_person'].get_query = function(doc, cdt, cdn) {
-	return {
-		filters: {'supplier': doc.supplier}
-	}
-}
-
-cur_frm.fields_dict['po_details'].grid.get_field('project_name').get_query = function(doc, cdt, cdn) {
+cur_frm.fields_dict['items'].grid.get_field('project').get_query = function(doc, cdt, cdn) {
 	return {
 		filters:[
 			['Project', 'status', 'not in', 'Completed, Cancelled']
@@ -130,74 +388,16 @@ cur_frm.fields_dict['po_details'].grid.get_field('project_name').get_query = fun
 	}
 }
 
-cur_frm.cscript.get_last_purchase_rate = function(doc, cdt, cdn){
-	return $c_obj(doc, 'get_last_purchase_rate', '', function(r, rt) {
-		refresh_field(cur_frm.cscript.fname);
-		var doc = locals[cdt][cdn];
-		cur_frm.cscript.calc_amount( doc, 2);
-	});
-}
-
-cur_frm.cscript['Stop Purchase Order'] = function() {
-	var doc = cur_frm.doc;
-	var check = confirm(__("Do you really want to STOP ") + doc.name);
-
-	if (check) {
-		return $c('runserverobj', args={'method':'update_status', 'arg': 'Stopped', 'docs':doc}, function(r,rt) {
-			cur_frm.refresh();
-		});
+cur_frm.fields_dict['items'].grid.get_field('bom').get_query = function(doc, cdt, cdn) {
+	var d = locals[cdt][cdn]
+	return {
+		filters: [
+			['BOM', 'item', '=', d.item_code],
+			['BOM', 'is_active', '=', '1'],
+			['BOM', 'docstatus', '=', '1'],
+			['BOM', 'company', '=', doc.company]
+		]
 	}
-}
-
-cur_frm.cscript['Unstop Purchase Order'] = function() {
-	var doc = cur_frm.doc;
-	var check = confirm(__("Do you really want to UNSTOP ") + doc.name);
-
-	if (check) {
-		return $c('runserverobj', args={'method':'update_status', 'arg': 'Submitted', 'docs':doc}, function(r,rt) {
-			cur_frm.refresh();
-		});
-	}
-}
-
-cur_frm.pformat.indent_no = function(doc, cdt, cdn){
-	//function to make row of table
-
-	var make_row = function(title,val1, val2, bold){
-		var bstart = '<b>'; var bend = '</b>';
-
-		return '<tr><td style="width:39%;">'+(bold?bstart:'')+title+(bold?bend:'')+'</td>'
-		 +'<td style="width:61%;text-align:left;">'+val1+(val2?' ('+dateutil.str_to_user(val2)+')':'')+'</td>'
-		 +'</tr>'
-	}
-
-	out ='';
-
-	var cl = doc.po_details || [];
-
-	// outer table
-	var out='<div><table class="noborder" style="width:100%"><tr><td style="width: 50%"></td><td>';
-
-	// main table
-	out +='<table class="noborder" style="width:100%">';
-
-	// add rows
-	if(cl.length){
-		prevdoc_list = new Array();
-		for(var i=0;i<cl.length;i++){
-			if(cl[i].prevdoc_doctype == 'Material Request' && cl[i].prevdoc_docname && prevdoc_list.indexOf(cl[i].prevdoc_docname) == -1) {
-				prevdoc_list.push(cl[i].prevdoc_docname);
-				if(prevdoc_list.length ==1)
-					out += make_row(cl[i].prevdoc_doctype, cl[i].prevdoc_docname, null,0);
-				else
-					out += make_row('', cl[i].prevdoc_docname,null,0);
-			}
-		}
-	}
-
-	out +='</table></td></tr></table></div>';
-
-	return out;
 }
 
 cur_frm.cscript.on_submit = function(doc, cdt, cdn) {
@@ -206,8 +406,16 @@ cur_frm.cscript.on_submit = function(doc, cdt, cdn) {
 	}
 }
 
-cur_frm.cscript.send_sms = function() {
-	frappe.require("assets/erpnext/js/sms_manager.js");
-	var sms_man = new SMSManager(cur_frm.doc);
+function set_schedule_date(frm) {
+	if(frm.doc.schedule_date){
+		erpnext.utils.copy_value_in_all_row(frm.doc, frm.doc.doctype, frm.doc.name, "items", "schedule_date");
+	}
 }
 
+frappe.provide("erpnext.buying");
+
+frappe.ui.form.on("Purchase Order", "is_subcontracted", function(frm) {
+	if (frm.doc.is_subcontracted === "Yes") {
+		erpnext.buying.get_default_bom(frm);
+	}
+});

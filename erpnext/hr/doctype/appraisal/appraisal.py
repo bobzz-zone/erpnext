@@ -1,4 +1,4 @@
-# Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+# Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 # License: GNU General Public License v3. See license.txt
 
 from __future__ import unicode_literals
@@ -15,6 +15,9 @@ class Appraisal(Document):
 	def validate(self):
 		if not self.status:
 			self.status = "Draft"
+
+		if not self.goals:
+			frappe.throw(_("Goals cannot be empty"))
 
 		set_employee_name(self)
 		self.validate_dates()
@@ -40,7 +43,7 @@ class Appraisal(Document):
 
 	def calculate_total(self):
 		total, total_w  = 0, 0
-		for d in self.get('appraisal_details'):
+		for d in self.get('goals'):
 			if d.score:
 				d.score_earned = flt(d.score) * flt(d.per_weightage) / 100
 				total = total + d.score_earned

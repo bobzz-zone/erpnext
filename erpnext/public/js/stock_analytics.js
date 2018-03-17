@@ -1,15 +1,13 @@
-// Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+// Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 // License: GNU General Public License v3. See license.txt
 
-frappe.require("assets/erpnext/js/stock_grid_report.js");
 
 erpnext.StockAnalytics = erpnext.StockGridReport.extend({
 	init: function(wrapper, opts) {
 		var args = {
 			title: __("Stock Analytics"),
-			page: wrapper,
 			parent: $(wrapper).find('.layout-main'),
-			appframe: wrapper.appframe,
+			page: wrapper.page,
 			doctypes: ["Item", "Item Group", "Warehouse", "Stock Ledger Entry", "Brand",
 				"Fiscal Year", "Serial No"],
 			tree_grid: {
@@ -36,7 +34,7 @@ erpnext.StockAnalytics = erpnext.StockGridReport.extend({
 	},
 	setup_columns: function() {
 		var std_columns = [
-			{id: "check", name: __("Plot"), field: "check", width: 30,
+			{id: "_check", name: __("Plot"), field: "_check", width: 30,
 				formatter: this.check_formatter},
 			{id: "name", name: __("Item"), field: "name", width: 300,
 				formatter: this.tree_formatter},
@@ -51,7 +49,7 @@ erpnext.StockAnalytics = erpnext.StockGridReport.extend({
 	},
 	filters: [
 		{fieldtype:"Select", label: __("Value or Qty"), fieldname: "value_or_qty",
-			options:["Value", "Quantity"],
+			options:[{label:__("Value"), value:"Value"}, {label:__("Quantity"), value:"Quantity"}],
 			filter: function(val, item, opts, me) {
 				return me.apply_zero_filter(val, item, opts, me);
 			}},
@@ -62,12 +60,15 @@ erpnext.StockAnalytics = erpnext.StockGridReport.extend({
 		{fieldtype:"Select", label: __("Warehouse"), link:"Warehouse", fieldname: "warehouse",
 			default_value: __("Select Warehouse...")},
 		{fieldtype:"Date", label: __("From Date"), fieldname: "from_date"},
-		{fieldtype:"Label", label: __("To")},
 		{fieldtype:"Date", label: __("To Date"), fieldname: "to_date"},
 		{fieldtype:"Select", label: __("Range"), fieldname: "range",
-			options:["Daily", "Weekly", "Monthly", "Quarterly", "Yearly"]},
-		{fieldtype:"Button", label: __("Refresh"), icon:"icon-refresh icon-white"},
-		{fieldtype:"Button", label: __("Reset Filters"), icon: "icon-filter"}
+			options:[
+				{label:__("Daily"), value:"Daily"},
+				{label:__("Weekly"), value:"Weekly"},
+				{label:__("Monthly"), value:"Monthly"},
+				{label:__("Quarterly"), value:"Quarterly"},
+				{label:__("Yearly"), value:"Yearly"},
+			]}
 	],
 	setup_filters: function() {
 		var me = this;
@@ -76,7 +77,7 @@ erpnext.StockAnalytics = erpnext.StockGridReport.extend({
 		this.trigger_refresh_on_change(["value_or_qty", "brand", "warehouse", "range"]);
 
 		this.show_zero_check();
-		this.setup_plot_check();
+		this.setup_chart_check();
 	},
 	init_filter_values: function() {
 		this._super();
@@ -118,8 +119,8 @@ erpnext.StockAnalytics = erpnext.StockGridReport.extend({
 	},
 	prepare_balances: function() {
 		var me = this;
-		var from_date = dateutil.str_to_obj(this.from_date);
-		var to_date = dateutil.str_to_obj(this.to_date);
+		var from_date = frappe.datetime.str_to_obj(this.from_date);
+		var to_date = frappe.datetime.str_to_obj(this.to_date);
 		var data = frappe.report_dump.data["Stock Ledger Entry"];
 
 		this.item_warehouse = {};
@@ -128,7 +129,7 @@ erpnext.StockAnalytics = erpnext.StockGridReport.extend({
 		for(var i=0, j=data.length; i<j; i++) {
 			var sl = data[i];
 			sl.posting_datetime = sl.posting_date + " " + sl.posting_time;
-			var posting_datetime = dateutil.str_to_obj(sl.posting_datetime);
+			var posting_datetime = frappe.datetime.str_to_obj(sl.posting_datetime);
 
 			if(me.is_default("warehouse") ? true : me.warehouse == sl.warehouse) {
 				var item = me.item_by_name[sl.item_code];
@@ -137,12 +138,12 @@ erpnext.StockAnalytics = erpnext.StockGridReport.extend({
 				if(me.value_or_qty!="Quantity") {
 					var wh = me.get_item_warehouse(sl.warehouse, sl.item_code);
 					var valuation_method = item.valuation_method ?
-						item.valuation_method : sys_defaults.valuation_method;
+						item.valuation_method : frappe.sys_defaults.valuation_method;
 					var is_fifo = valuation_method == "FIFO";
 
 					if(sl.voucher_type=="Stock Reconciliation") {
 						var diff = (sl.qty_after_transaction * sl.valuation_rate) - item.closing_qty_value;
-						wh.fifo_stack.push([sl.qty_after_transaction, sl.valuation_rate, sl.posting_date]);
+						wh.fifo_stack = [[sl.qty_after_transaction, sl.valuation_rate, sl.posting_date]];
 						wh.balance_qty = sl.qty_after_transaction;
 						wh.balance_value = sl.valuation_rate * sl.qty_after_transaction;
 					} else {
@@ -170,7 +171,6 @@ erpnext.StockAnalytics = erpnext.StockGridReport.extend({
 	},
 	update_groups: function() {
 		var me = this;
-
 		$.each(this.data, function(i, item) {
 			// update groups
 			if(!item.is_group && me.apply_filter(item, "brand")) {
@@ -184,7 +184,7 @@ erpnext.StockAnalytics = erpnext.StockGridReport.extend({
 
 				var parent = me.parent_map[item.name];
 				while(parent) {
-					parent_group = me.item_by_name[parent];
+					var parent_group = me.item_by_name[parent];
 					$.each(me.columns, function(c, col) {
 						if (col.formatter == me.currency_formatter) {
 							parent_group[col.field] =
@@ -197,9 +197,6 @@ erpnext.StockAnalytics = erpnext.StockGridReport.extend({
 			}
 		});
 	},
-	get_plot_points: function(item, col, idx) {
-		return [[dateutil.user_to_obj(col.name).getTime(), item[col.field]]]
-	},
 	show_stock_ledger: function(item_code) {
 		frappe.route_options = {
 			item_code: item_code,
@@ -209,3 +206,4 @@ erpnext.StockAnalytics = erpnext.StockGridReport.extend({
 		frappe.set_route("query-report", "Stock Ledger");
 	}
 });
+

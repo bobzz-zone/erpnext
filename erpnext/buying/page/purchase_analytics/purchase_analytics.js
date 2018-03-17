@@ -1,7 +1,7 @@
-// Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+// Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 // License: GNU General Public License v3. See license.txt
 
-frappe.pages['purchase-analytics'].onload = function(wrapper) {
+frappe.pages['purchase-analytics'].on_page_load = function(wrapper) {
 	frappe.ui.make_app_page({
 		parent: wrapper,
 		title: __('Purchase Analytics'),
@@ -10,18 +10,15 @@ frappe.pages['purchase-analytics'].onload = function(wrapper) {
 
 	new erpnext.PurchaseAnalytics(wrapper);
 
-
-	wrapper.appframe.add_module_icon("Buying")
-
+	frappe.breadcrumbs.add("Buying");
 }
 
 erpnext.PurchaseAnalytics = frappe.views.TreeGridReport.extend({
 	init: function(wrapper) {
 		this._super({
 			title: __("Purchase Analytics"),
-			page: wrapper,
 			parent: $(wrapper).find('.layout-main'),
-			appframe: wrapper.appframe,
+			page: wrapper.page,
 			doctypes: ["Item", "Item Group", "Supplier", "Supplier Type", "Company", "Fiscal Year",
 				"Purchase Invoice", "Purchase Invoice Item",
 				"Purchase Order", "Purchase Order Item[Purchase Analytics]",
@@ -36,11 +33,7 @@ erpnext.PurchaseAnalytics = frappe.views.TreeGridReport.extend({
 				item_key: "supplier",
 				parent_field: "parent_supplier_type",
 				formatter: function(item) {
-					// return repl('<a href="#Report/stock-invoices/customer=%(enc_value)s">%(value)s</a>', {
-					// 		value: item.name,
-					// 		enc_value: encodeURIComponent(item.name)
-					// 	});
-					return item.name;
+					return item.supplier_name ? item.supplier_name + " (" + item.name + ")" : item.name;
 				}
 			},
 			"Supplier": {
@@ -48,7 +41,7 @@ erpnext.PurchaseAnalytics = frappe.views.TreeGridReport.extend({
 				show: false,
 				item_key: "supplier",
 				formatter: function(item) {
-					return item.name;
+					return item.supplier_name ? item.supplier_name + " (" + item.name + ")" : item.name;
 				}
 			},
 			"Item Group": {
@@ -74,7 +67,7 @@ erpnext.PurchaseAnalytics = frappe.views.TreeGridReport.extend({
 		this.tree_grid = this.tree_grids[this.tree_type];
 
 		var std_columns = [
-			{id: "check", name: __("Plot"), field: "check", width: 30,
+			{id: "_check", name: __("Plot"), field: "_check", width: 30,
 				formatter: this.check_formatter},
 			{id: "name", name: this.tree_grid.label, field: "name", width: 300,
 				formatter: this.tree_formatter},
@@ -98,14 +91,11 @@ erpnext.PurchaseAnalytics = frappe.views.TreeGridReport.extend({
 		{fieldtype:"Select", label: __("Company"), link:"Company", fieldname: "company",
 			default_value: __("Select Company...")},
 		{fieldtype:"Date", label: __("From Date"), fieldname: "from_date"},
-		{fieldtype:"Label", label: __("To")},
 		{fieldtype:"Date", label: __("To Date"), fieldname: "to_date"},
 		{fieldtype:"Select", label: __("Range"), fieldname: "range",
 			options:[{label: __("Daily"), value: "Daily"}, {label: __("Weekly"), value: "Weekly"},
 				{label: __("Monthly"), value: "Monthly"}, {label: __("Quarterly"), value: "Quarterly"},
-				{label: __("Yearly"), value: "Yearly"}]},
-		{fieldtype:"Button", label: __("Refresh"), icon:"icon-refresh icon-white"},
-		{fieldtype:"Button", label: __("Reset Filters"), icon: "icon-filter"}
+				{label: __("Yearly"), value: "Yearly"}]}
 	],
 	setup_filters: function() {
 		var me = this;
@@ -114,7 +104,7 @@ erpnext.PurchaseAnalytics = frappe.views.TreeGridReport.extend({
 		this.trigger_refresh_on_change(["value_or_qty", "tree_type", "based_on", "company"]);
 
 		this.show_zero_check()
-		this.setup_plot_check();
+		this.setup_chart_check();
 	},
 	init_filter_values: function() {
 		this._super();
@@ -201,17 +191,17 @@ erpnext.PurchaseAnalytics = frappe.views.TreeGridReport.extend({
 	},
 	prepare_balances: function() {
 		var me = this;
-		var from_date = dateutil.str_to_obj(this.from_date);
-		var to_date = dateutil.str_to_obj(this.to_date);
+		var from_date = frappe.datetime.str_to_obj(this.from_date);
+		var to_date = frappe.datetime.str_to_obj(this.to_date);
 		var is_val = this.value_or_qty == 'Value';
 
 		$.each(this.tl[this.based_on], function(i, tl) {
 			if (me.is_default('company') ? true : tl.company === me.company) {
-				var posting_date = dateutil.str_to_obj(tl.posting_date);
+				var posting_date = frappe.datetime.str_to_obj(tl.posting_date);
 				if (posting_date >= from_date && posting_date <= to_date) {
 					var item = me.item_by_name[tl[me.tree_grid.item_key]] ||
 						me.item_by_name['Not Set'];
-					item[me.column_map[tl.posting_date].field] += (is_val ? tl.base_amount : tl.qty);
+					item[me.column_map[tl.posting_date].field] += (is_val ? tl.base_net_amount : tl.qty);
 				}
 			}
 		});
@@ -252,9 +242,5 @@ erpnext.PurchaseAnalytics = frappe.views.TreeGridReport.extend({
 		if(!this.checked) {
 			this.data[0].checked = true;
 		}
-	},
-	get_plot_points: function(item, col, idx) {
-		return [[dateutil.str_to_obj(col.id).getTime(), item[col.field]],
-			[dateutil.user_to_obj(col.name).getTime(), item[col.field]]];
 	}
 });

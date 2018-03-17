@@ -1,10 +1,10 @@
+from __future__ import unicode_literals
 from frappe import _
 
 def get_data():
 	return [
 		{
-			"label": _("Documents"),
-			"icon": "icon-star",
+			"label": _("Employee and Attendance"),
 			"items": [
 				{
 					"type": "doctype",
@@ -13,13 +13,10 @@ def get_data():
 				},
 				{
 					"type": "doctype",
-					"name": "Leave Application",
-					"description": _("Applications for leave."),
-				},
-				{
-					"type": "doctype",
-					"name": "Expense Claim",
-					"description": _("Claims for company expense."),
+					"name": "Employee Attendance Tool",
+					"label": _("Employee Attendance Tool"),
+					"description":_("Mark Attendance for multiple employees"),
+					"hide_count": True
 				},
 				{
 					"type": "doctype",
@@ -28,14 +25,15 @@ def get_data():
 				},
 				{
 					"type": "doctype",
-					"name": "Salary Slip",
-					"description": _("Monthly salary statement."),
+					"name": "Upload Attendance",
+					"description":_("Upload attendance from a .csv file"),
+					"hide_count": True
 				},
-				{
-					"type": "doctype",
-					"name": "Appraisal",
-					"description": _("Performance appraisal."),
-				},
+			]
+		},
+		{
+			"label": _("Recruitment"),
+			"items": [
 				{
 					"type": "doctype",
 					"name": "Job Applicant",
@@ -46,24 +44,35 @@ def get_data():
 					"name": "Job Opening",
 					"description": _("Opening for a Job."),
 				},
+				{
+					"type": "doctype",
+					"name": "Job Offer",
+					"description": _("Offer candidate a Job."),
+				},
 			]
 		},
 		{
-			"label": _("Tools"),
-			"icon": "icon-wrench",
+			"label": _("Leaves and Holiday"),
 			"items": [
 				{
 					"type": "doctype",
-					"name": "Salary Manager",
-					"label": _("Process Payroll"),
-					"description":_("Generate Salary Slips"),
-					"hide_count": True
+					"name": "Leave Application",
+					"description": _("Applications for leave."),
 				},
 				{
 					"type": "doctype",
-					"name": "Upload Attendance",
-					"description":_("Upload attendance from a .csv file"),
-					"hide_count": True
+					"name":"Leave Type",
+					"description": _("Type of leaves like casual, sick etc."),
+				},
+				{
+					"type": "doctype",
+					"name": "Holiday List",
+					"description": _("Holiday master.")
+				},
+				{
+					"type": "doctype",
+					"name": "Leave Allocation",
+					"description": _("Allocate leaves for a period.")
 				},
 				{
 					"type": "doctype",
@@ -72,21 +81,146 @@ def get_data():
 					"description":_("Allocate leaves for the year."),
 					"hide_count": True
 				},
+				{
+					"type": "doctype",
+					"name": "Leave Block List",
+					"description": _("Block leave applications by department.")
+				},
+
+			]
+		},
+		{
+			"label": _("Payroll"),
+			"items": [
+				{
+					"type": "doctype",
+					"name": "Salary Slip",
+					"description": _("Monthly salary statement."),
+				},
+				{
+					"type": "doctype",
+					"name": "Payroll Entry",
+					"label": _("Payroll Entry"),
+					"description":_("Generate Salary Slips"),
+					"hide_count": True
+				},
+				{
+					"type": "doctype",
+					"name": "Salary Structure",
+					"description": _("Salary template master.")
+				},
+				{
+					"type": "doctype",
+					"name": "Salary Component",
+					"label": _("Salary Components"),
+					"description": _("Earnings, Deductions and other Salary components")
+				},
+
+			]
+		},
+		{
+			"label": _("Expense Claims"),
+			"items": [
+				{
+					"type": "doctype",
+					"name": "Employee Advance",
+					"description": _("Manage advance amount given to the Employee"),
+				},
+				{
+					"type": "doctype",
+					"name": "Expense Claim",
+					"description": _("Claims for company expense."),
+				},
+				{
+					"type": "doctype",
+					"name": "Expense Claim Type",
+					"description": _("Types of Expense Claim.")
+				},
+			]
+		},
+		{
+			"label": _("Appraisals"),
+			"items": [
+				{
+					"type": "doctype",
+					"name": "Appraisal",
+					"description": _("Performance appraisal."),
+				},
+				{
+					"type": "doctype",
+					"name": "Appraisal Template",
+					"description": _("Template for performance appraisals.")
+				},
+				{
+					"type": "page",
+					"name": "team-updates",
+					"label": _("Team Updates")
+				},
+			]
+		},
+		{
+			"label": _("Employee Loan Management"),
+			"icon": "icon-list",
+			"items": [
+				{
+					"type": "doctype",
+					"name": "Loan Type",
+					"description": _("Define various loan types")
+				},
+				{
+					"type": "doctype",
+					"name": "Employee Loan Application",
+					"description": _("Employee Loan Application")
+				},
+				{
+					"type": "doctype",
+					"name": "Employee Loan"
+				},
+			]
+		},
+		{
+			"label": _("Training"),
+			"items": [
+				{
+					"type": "doctype",
+					"name": "Training Program"
+				},
+				{
+					"type": "doctype",
+					"name": "Training Event"
+				},
+				{
+					"type": "doctype",
+					"name": "Training Result"
+				},
+				{
+					"type": "doctype",
+					"name": "Training Feedback"
+				},
+			]
+		},
+
+		{
+			"label": _("Fleet Management"),
+			"items": [
+				{
+					"type": "doctype",
+					"name": "Vehicle"
+				},
+				{
+					"type": "doctype",
+					"name": "Vehicle Log"
+				},
 			]
 		},
 		{
 			"label": _("Setup"),
-			"icon": "icon-cog",
+			"icon": "fa fa-cog",
 			"items": [
 				{
 					"type": "doctype",
 					"name": "HR Settings",
 					"description": _("Settings for HR Module")
-				},
-				{
-					"type": "doctype",
-					"name": "Employee",
-					"description": _("Employee master.")
 				},
 				{
 					"type": "doctype",
@@ -110,59 +244,13 @@ def get_data():
 				},
 				{
 					"type": "doctype",
-					"name": "Salary Structure",
-					"description": _("Salary template master.")
-				},
-				{
-					"type": "doctype",
-					"name": "Earning Type",
-					"description": _("Salary components.")
-				},
-				{
-					"type": "doctype",
-					"name": "Deduction Type",
-					"description": _("Tax and other salary deductions.")
-				},
-				{
-					"type": "doctype",
-					"name": "Leave Allocation",
-					"description": _("Allocate leaves for a period.")
-				},
-				{
-					"type": "doctype",
-					"name":"Leave Type",
-					"description": _("Type of leaves like casual, sick etc."),
-				},
-				{
-					"type": "doctype",
-					"name": "Holiday List",
-					"description": _("Holiday master.")
-				},
-				{
-					"type": "doctype",
-					"name": "Leave Block List",
-					"description": _("Block leave applications by department.")
-				},
-				{
-					"type": "doctype",
-					"name": "Appraisal Template",
-					"description": _("Template for performance appraisals.")
-				},
-				{
-					"type": "doctype",
-					"name": "Expense Claim Type",
-					"description": _("Types of Expense Claim.")
-				},
-				{
-					"type": "doctype",
-					"name": "Jobs Email Settings",
-					"description": _("Setup incoming server for jobs email id. (e.g. jobs@example.com)")
+					"name": "Daily Work Summary Settings"
 				},
 			]
 		},
 		{
-			"label": _("Standard Reports"),
-			"icon": "icon-list",
+			"label": _("Reports"),
+			"icon": "fa fa-list",
 			"items": [
 				{
 					"type": "report",
@@ -178,13 +266,19 @@ def get_data():
 				},
 				{
 					"type": "report",
+					"is_query_report": True,
+					"name": "Employees working on a holiday",
+					"doctype": "Employee"
+				},
+				{
+					"type": "report",
 					"name": "Employee Information",
 					"doctype": "Employee"
 				},
 				{
 					"type": "report",
 					"is_query_report": True,
-					"name": "Monthly Salary Register",
+					"name": "Salary Register",
 					"doctype": "Salary Slip"
 				},
 				{
@@ -193,6 +287,34 @@ def get_data():
 					"name": "Monthly Attendance Sheet",
 					"doctype": "Attendance"
 				},
+				{
+					"type": "report",
+					"is_query_report": True,
+					"name": "Vehicle Expenses",
+					"doctype": "Vehicle"
+				},
+
 			]
 		},
+		{
+			"label": _("Help"),
+			"icon": "fa fa-facetime-video",
+			"items": [
+				{
+					"type": "help",
+					"label": _("Setting up Employees"),
+					"youtube_id": "USfIUdZlUhw"
+				},
+				{
+					"type": "help",
+					"label": _("Leave Management"),
+					"youtube_id": "fc0p_AXebc8"
+				},
+				{
+					"type": "help",
+					"label": _("Expense Claims"),
+					"youtube_id": "5SZHJF--ZFY"
+				}
+			]
+		}
 	]

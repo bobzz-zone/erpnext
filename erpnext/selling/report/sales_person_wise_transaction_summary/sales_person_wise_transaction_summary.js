@@ -1,4 +1,4 @@
-// Copyright (c) 2013, Web Notes Technologies Pvt. Ltd. and Contributors
+// Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 // License: GNU General Public License v3. See license.txt
 
 frappe.query_reports["Sales Person-wise Transaction Summary"] = {
@@ -26,14 +26,14 @@ frappe.query_reports["Sales Person-wise Transaction Summary"] = {
 			fieldname:"to_date",
 			label: __("To Date"),
 			fieldtype: "Date",
-			default: get_today()
+			default: frappe.datetime.get_today()
 		},
 		{
 			fieldname:"company",
 			label: __("Company"),
 			fieldtype: "Link",
 			options: "Company",
-			default: frappe.defaults.get_user_default("company")
+			default: frappe.defaults.get_user_default("Company")
 		},
 		{
 			fieldname:"item_group",
